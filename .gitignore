@@ -57,3 +57,4 @@ Thumbs.db
 # Ignore local lockfiles if you want to manage them at the root level later
 # Cargo.lock
 
+/.cargo/config.toml
