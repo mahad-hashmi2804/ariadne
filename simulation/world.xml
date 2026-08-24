@@ -1,0 +1,15 @@
+<mujoco model="full_world">
+    <option timestep="0.002" gravity="0 0 -9.81"/>
+
+    <worldbody>
+        <light pos="0 0 3" dir="0 0 -1"/>
+        <geom name="floor" type="plane" size="10 10 0.1" rgba="0.9 0.9 0.9 1" friction="3.0 0.5 0.5"/>
+
+        <!-- Obstacles for Detection team to locate -->
+        <geom name="obstacle_block" type="box" size="0.1 0.1 0.1" pos="1.5 0 0.1" rgba="0.9 0.2 0.2 1"/>
+        <geom name="ramp" type="box" size="0.5 0.3 0.05" pos="3.0 0 0.05" rgba="0.2 0.7 0.3 1"/>
+    </worldbody>
+
+    <!-- Include the main robot definition -->
+    <include file="robot.xml"/>
+</mujoco>

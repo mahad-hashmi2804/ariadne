@@ -1,0 +1,120 @@
+<mujoco model="crab_robot">
+    <default>
+        <geom rgba="0.8 0.3 0.2 1" size="0.015" friction="3.0 0.5 0.5"/>
+        <joint type="hinge" damping="1.2" armature="0.01" limited="true"/>
+        <position kp="80" kv="6" forcerange="-40 40"/>
+    </default>
+
+    <contact>
+        <exclude body1="fl_thigh" body2="fl_shin"/>
+        <exclude body1="ml_thigh" body2="ml_shin"/>
+        <exclude body1="bl_thigh" body2="bl_shin"/>
+        <exclude body1="fr_thigh" body2="fr_shin"/>
+        <exclude body1="mr_thigh" body2="mr_shin"/>
+        <exclude body1="br_thigh" body2="br_shin"/>
+    </contact>
+
+    <worldbody>
+        <body name="torso" pos="0 0 0.14">
+            <freejoint name="root"/>
+            <!-- Camera mounted on front face, facing forward along +X -->
+            <camera name="front_cam" pos="0.18 0 0.02" xyaxes="0 -1 0 0 0 1"/>
+            <geom name="carapace" type="box" size="0.18 0.28 0.03" rgba="0.85 0.35 0.15 1" mass="2.5"/>
+
+            <!-- LEFT LEGS -->
+            <body name="fl_hip" pos="0.12 0.22 0">
+                <joint name="fl_swing" axis="0 0 1" range="-0.8 0.8"/>
+                <geom type="capsule" fromto="0 0 0  0.05 0.08 0"/>
+                <body name="fl_thigh" pos="0.05 0.08 0">
+                    <joint name="fl_lift" axis="0 1 0" range="-0.8 0.8"/>
+                    <geom type="capsule" fromto="0 0 0  0 0.08 -0.05"/>
+                    <body name="fl_shin" pos="0 0.08 -0.05">
+                        <joint name="fl_knee" axis="0 1 0" range="-1.2 0.5"/>
+                        <geom type="capsule" fromto="0 0 0  0 0 -0.08" rgba="0.2 0.2 0.2 1"/>
+                        <site name="fl_foot" pos="0 0 -0.08" size="0.02" rgba="0 0 0 1"/>
+                    </body>
+                </body>
+            </body>
+
+            <body name="ml_hip" pos="0.0 0.24 0">
+                <joint name="ml_swing" axis="0 0 1" range="-0.8 0.8"/>
+                <geom type="capsule" fromto="0 0 0  0 0.09 0"/>
+                <body name="ml_thigh" pos="0 0.09 0">
+                    <joint name="ml_lift" axis="0 1 0" range="-0.8 0.8"/>
+                    <geom type="capsule" fromto="0 0 0  0 0.08 -0.05"/>
+                    <body name="ml_shin" pos="0 0.08 -0.05">
+                        <joint name="ml_knee" axis="0 1 0" range="-1.2 0.5"/>
+                        <geom type="capsule" fromto="0 0 0  0 0 -0.08" rgba="0.2 0.2 0.2 1"/>
+                        <site name="ml_foot" pos="0 0 -0.08" size="0.02" rgba="0 0 0 1"/>
+                    </body>
+                </body>
+            </body>
+
+            <body name="bl_hip" pos="-0.12 0.22 0">
+                <joint name="bl_swing" axis="0 0 1" range="-0.8 0.8"/>
+                <geom type="capsule" fromto="0 0 0  -0.05 0.08 0"/>
+                <body name="bl_thigh" pos="-0.05 0.08 0">
+                    <joint name="bl_lift" axis="0 1 0" range="-0.8 0.8"/>
+                    <geom type="capsule" fromto="0 0 0  0 0.08 -0.05"/>
+                    <body name="bl_shin" pos="0 0.08 -0.05">
+                        <joint name="bl_knee" axis="0 1 0" range="-1.2 0.5"/>
+                        <geom type="capsule" fromto="0 0 0  0 0 -0.08" rgba="0.2 0.2 0.2 1"/>
+                        <site name="bl_foot" pos="0 0 -0.08" size="0.02" rgba="0 0 0 1"/>
+                    </body>
+                </body>
+            </body>
+
+            <!-- RIGHT LEGS -->
+            <body name="fr_hip" pos="0.12 -0.22 0">
+                <joint name="fr_swing" axis="0 0 1" range="-0.8 0.8"/>
+                <geom type="capsule" fromto="0 0 0  0.05 -0.08 0"/>
+                <body name="fr_thigh" pos="0.05 -0.08 0">
+                    <joint name="fr_lift" axis="0 1 0" range="-0.8 0.8"/>
+                    <geom type="capsule" fromto="0 0 0  0 -0.08 -0.05"/>
+                    <body name="fr_shin" pos="0 -0.08 -0.05">
+                        <joint name="fr_knee" axis="0 1 0" range="-1.2 0.5"/>
+                        <geom type="capsule" fromto="0 0 0  0 0 -0.08" rgba="0.2 0.2 0.2 1"/>
+                        <site name="fr_foot" pos="0 0 -0.08" size="0.02" rgba="0 0 0 1"/>
+                    </body>
+                </body>
+            </body>
+
+            <body name="mr_hip" pos="0.0 -0.24 0">
+                <joint name="mr_swing" axis="0 0 1" range="-0.8 0.8"/>
+                <geom type="capsule" fromto="0 0 0  0 -0.09 0"/>
+                <body name="mr_thigh" pos="0 -0.09 0">
+                    <joint name="mr_lift" axis="0 1 0" range="-0.8 0.8"/>
+                    <geom type="capsule" fromto="0 0 0  0 -0.08 -0.05"/>
+                    <body name="mr_shin" pos="0 -0.08 -0.05">
+                        <joint name="mr_knee" axis="0 1 0" range="-1.2 0.5"/>
+                        <geom type="capsule" fromto="0 0 0  0 0 -0.08" rgba="0.2 0.2 0.2 1"/>
+                        <site name="mr_foot" pos="0 0 -0.08" size="0.02" rgba="0 0 0 1"/>
+                    </body>
+                </body>
+            </body>
+
+            <body name="br_hip" pos="-0.12 -0.22 0">
+                <joint name="br_swing" axis="0 0 1" range="-0.8 0.8"/>
+                <geom type="capsule" fromto="0 0 0  -0.05 -0.08 0"/>
+                <body name="br_thigh" pos="-0.05 -0.08 0">
+                    <joint name="br_lift" axis="0 1 0" range="-0.8 0.8"/>
+                    <geom type="capsule" fromto="0 0 0  0 -0.08 -0.05"/>
+                    <body name="br_shin" pos="0 -0.08 -0.05">
+                        <joint name="br_knee" axis="0 1 0" range="-1.2 0.5"/>
+                        <geom type="capsule" fromto="0 0 0  0 0 -0.08" rgba="0.2 0.2 0.2 1"/>
+                        <site name="br_foot" pos="0 0 -0.08" size="0.02" rgba="0 0 0 1"/>
+                    </body>
+                </body>
+            </body>
+        </body>
+    </worldbody>
+
+    <actuator>
+        <position joint="fl_swing"/><position joint="fl_lift"/><position joint="fl_knee"/>
+        <position joint="ml_swing"/><position joint="ml_lift"/><position joint="ml_knee"/>
+        <position joint="bl_swing"/><position joint="bl_lift"/><position joint="bl_knee"/>
+        <position joint="fr_swing"/><position joint="fr_lift"/><position joint="fr_knee"/>
+        <position joint="mr_swing"/><position joint="mr_lift"/><position joint="mr_knee"/>
+        <position joint="br_swing"/><position joint="br_lift"/><position joint="br_knee"/>
+    </actuator>
+</mujoco>
