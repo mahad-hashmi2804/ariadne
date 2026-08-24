@@ -15,7 +15,6 @@ simulation/target/
 
 # MSVC Windows builds of rustc generate these debugging symbols
 *.pdb
-
 # Rust compiler crash/internal error logs
 rustc-ice-*.txt
 
@@ -58,3 +57,5 @@ Thumbs.db
 # Cargo.lock
 
 /.cargo/config.toml
+
+*instructions.txt

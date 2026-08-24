@@ -1,4 +1,4 @@
-use image::io::Reader as ImageReader;
+use image::ImageReader;
 use image::GrayImage;
 use serde::Serialize;
 use std::io::Cursor;
@@ -11,6 +11,7 @@ pub struct ObstacleTelemetry {
 }
 
 /// Decodes raw PNG bytes into a 16-bit Luma image (depth in millimeters)
+#[allow(dead_code)]
 pub fn decode_depth_png(png_bytes: &[u8]) -> Result<GrayImage, Box<dyn std::error::Error>> {
     let img = ImageReader::new(Cursor::new(png_bytes))
         .with_guessed_format()?
@@ -84,5 +85,107 @@ pub fn process_sensor_streams(
             distance_m: 0.0,
             angle_deg: 0.0,
         })
+    }
+}
+
+/// Helper function to create default fallback images for offline mode
+pub fn create_default_fallback_images() -> Result<(), Box<dyn std::error::Error>> {
+    use image::{RgbImage, Luma};
+    
+    let width = 640;
+    let height = 480;
+    
+    // Create RGB image with a red target
+    let mut rgb_img = RgbImage::new(width, height);
+    for x in 270..370 {
+        for y in 190..290 {
+            rgb_img.put_pixel(x, y, image::Rgb([255, 0, 0]));
+        }
+    }
+    rgb_img.save("fallback_rgb.jpg")?;
+
+    // Create 16-bit depth image (1.5 meters = 1500mm)
+    let mut depth_img = image::ImageBuffer::<Luma<u16>, Vec<u16>>::new(width, height);
+    for x in 0..width {
+        for y in 0..height {
+            depth_img.put_pixel(x, y, Luma([1500]));
+        }
+    }
+    depth_img.save("fallback_depth.png")?;
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{RgbImage, Luma};
+    use std::io::Cursor;
+
+    #[test]
+    fn test_red_target_detection() -> Result<(), Box<dyn std::error::Error>> {
+        let width = 640;
+        let height = 480;
+        let mut rgb_img = RgbImage::new(width, height);
+
+        // Create a red square (100x100) at center (270, 190) to (370, 290)
+        // Centroid should be (320, 240)
+        for x in 270..370 {
+            for y in 190..290 {
+                rgb_img.put_pixel(x, y, image::Rgb([255, 0, 0]));
+            }
+        }
+
+        let mut jpeg_bytes = Vec::new();
+        let mut cursor = Cursor::new(&mut jpeg_bytes);
+        image::DynamicImage::ImageRgb8(rgb_img).write_to(&mut cursor, image::ImageFormat::Jpeg)?;
+
+        let mut depth_img = image::ImageBuffer::<Luma<u16>, Vec<u16>>::new(width, height);
+        // Set depth to 1.5 meters (1500mm)
+        for x in 0..width {
+            for y in 0..height {
+                depth_img.put_pixel(x, y, Luma([1500]));
+            }
+        }
+
+        let mut depth_png_bytes = Vec::new();
+        let mut depth_cursor = Cursor::new(&mut depth_png_bytes);
+        image::DynamicImage::ImageLuma16(depth_img).write_to(&mut depth_cursor, image::ImageFormat::Png)?;
+
+        let telemetry = process_sensor_streams(&jpeg_bytes, &depth_png_bytes)?;
+
+        assert!(telemetry.obstacle_detected);
+        assert!((telemetry.distance_m - 1.5).abs() < 0.01);
+        assert!(telemetry.angle_deg.abs() < 0.5); // Should be near center (0 deg)
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_no_target_detection() -> Result<(), Box<dyn std::error::Error>> {
+        let width = 640;
+        let height = 480;
+        let rgb_img = RgbImage::new(width, height); // Black image
+
+        let mut jpeg_bytes = Vec::new();
+        let mut cursor = Cursor::new(&mut jpeg_bytes);
+        image::DynamicImage::ImageRgb8(rgb_img).write_to(&mut cursor, image::ImageFormat::Jpeg)?;
+
+        let mut depth_img = image::ImageBuffer::<Luma<u16>, Vec<u16>>::new(width, height);
+        for x in 0..width {
+            for y in 0..height {
+                depth_img.put_pixel(x, y, Luma([1000]));
+            }
+        }
+
+        let mut depth_png_bytes = Vec::new();
+        let mut depth_cursor = Cursor::new(&mut depth_png_bytes);
+        image::DynamicImage::ImageLuma16(depth_img).write_to(&mut depth_cursor, image::ImageFormat::Png)?;
+
+        let telemetry = process_sensor_streams(&jpeg_bytes, &depth_png_bytes)?;
+
+        assert!(!telemetry.obstacle_detected);
+
+        Ok(())
     }
 }
