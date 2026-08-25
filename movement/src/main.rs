@@ -10,6 +10,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sim_target = "127.0.0.1:5555";
 
     println!("[Movement] Tracked controller online.");
+    println!("[Movement] UDP actuator sender: 18 x f64 = 144 bytes");
+    println!("[Movement] Sending commands to 127.0.0.1:5555 at 100 Hz.");
     println!("[Movement] Keyboard controls:");
     println!("W = Forward");
     println!("S = Backward");
@@ -27,8 +29,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         if event::poll(Duration::from_millis(1))? {
             if let Event::Key(key_event) = event::read()? {
-
-                // Only respond to a real key press.
                 if key_event.kind != KeyEventKind::Press {
                     continue;
                 }
@@ -76,12 +76,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let v_left = linear_v - (angular_w * track_width / 2.0);
         let v_right = linear_v + (angular_w * track_width / 2.0);
 
-        let mut buffer = Vec::with_capacity(16);
-        buffer.extend_from_slice(&v_left.to_le_bytes());
-        buffer.extend_from_slice(&v_right.to_le_bytes());
+        // 18 actuator values, each an f64 (8 bytes).
+        // 18 × 8 = 144 bytes.
+        let actuator_values: [f64; 18] = [
+            v_left, v_right,
+            0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0,
+        ];
 
-        let _ = socket.send_to(&buffer, sim_target);
+        let mut buffer = Vec::with_capacity(144);
 
+        for value in actuator_values {
+            buffer.extend_from_slice(&value.to_le_bytes());
+        }
+
+        debug_assert_eq!(buffer.len(), 144);
+
+        socket.send_to(&buffer, sim_target)?;
+
+        // 100 Hz = one transmission every 10 milliseconds.
         sleep(Duration::from_millis(10));
     }
 
