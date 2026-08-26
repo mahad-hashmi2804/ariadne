@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-mujoco-rs = { workspace = true }
+mujoco-rs = { workspace = true, features = ["auto-download-mujoco"] }
 nalgebra = { workspace = true }
 serde_json = { workspace = true }
+<<<<<<< HEAD
+serde = {version = "1", features = ["derive"]}
+=======
+
+crossterm = "0.29"
+>>>>>>> 922303e351907e5792d18591019a6f6656524380
