@@ -765,6 +765,7 @@ dependencies = [
  "crossterm",
  "mujoco-rs",
  "nalgebra",
+ "serde",
  "serde_json",
 ]
 
