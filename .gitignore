@@ -58,3 +58,7 @@ Thumbs.db
 # Cargo.lock
 
 /.cargo/config.toml
+/detection/Cargo.lock
+/movement/Cargo.lock
+/simulation/Cargo.lock
+/Cargo.lock
