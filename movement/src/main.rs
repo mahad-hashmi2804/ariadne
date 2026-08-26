@@ -1,37 +1,106 @@
 use std::net::UdpSocket;
 use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let socket = UdpSocket::bind("127.0.0.1:0")?;
     let sim_target = "127.0.0.1:5555";
 
     println!("[Movement] Tracked controller online.");
-    println!("[Movement] Streaming 16-byte [v_left, v_right] commands to UDP 5555...\n");
+    println!("[Movement] UDP actuator sender: 18 x f64 = 144 bytes");
+    println!("[Movement] Sending commands to 127.0.0.1:5555 at 100 Hz.");
+    println!("[Movement] Keyboard controls:");
+    println!("W = Forward");
+    println!("S = Backward");
+    println!("A = Left");
+    println!("D = Right");
+    println!("Space = Stop");
+    println!("Q = Quit\n");
 
-    let start_time = Instant::now();
-    let track_width = 0.36; // Distance between left and right track centers in meters
+    enable_raw_mode()?;
+
+    let track_width = 0.36;
+    let mut linear_v: f64 = 0.0;
+    let mut angular_w: f64 = 0.0;
 
     loop {
-        let elapsed = start_time.elapsed().as_secs_f64();
+        if event::poll(Duration::from_millis(1))? {
+            if let Event::Key(key_event) = event::read()? {
+                if key_event.kind != KeyEventKind::Press {
+                    continue;
+                }
 
-        // Basic test routine: cycle through drive states every few seconds
-        let (linear_v, angular_w) = match (elapsed as u64) % 12 {
-            0..=3 => (2.0, 0.0),    // Drive straight forward (2.0 m/s)
-            4..=7 => (1.5, 1.2),    // Arc turn right
-            8..=11 => (0.0, 2.5),   // Pivot spin in place
-            _ => (0.0, 0.0),
-        };
+                match key_event.code {
+                    KeyCode::Char('w') | KeyCode::Char('W') => {
+                        linear_v = 2.0;
+                        angular_w = 0.0;
+                        println!("Forward");
+                    }
 
-        // 1. Explicitly type the outputs as f64
-        let v_left: f64 = linear_v - (angular_w * track_width / 2.0);
-        let v_right: f64 = linear_v + (angular_w * track_width / 2.0);
+                    KeyCode::Char('s') | KeyCode::Char('S') => {
+                        linear_v = -2.0;
+                        angular_w = 0.0;
+                        println!("Backward");
+                    }
 
-        let mut buffer = Vec::with_capacity(16);
-        buffer.extend_from_slice(&v_left.to_le_bytes());
-        buffer.extend_from_slice(&v_right.to_le_bytes());
+                    KeyCode::Char('a') | KeyCode::Char('A') => {
+                        linear_v = 0.0;
+                        angular_w = -2.5;
+                        println!("Left");
+                    }
 
-        let _ = socket.send_to(&buffer, sim_target);
-        sleep(Duration::from_millis(10)); // 100 Hz Loop
+                    KeyCode::Char('d') | KeyCode::Char('D') => {
+                        linear_v = 0.0;
+                        angular_w = 2.5;
+                        println!("Right");
+                    }
+
+                    KeyCode::Char(' ') => {
+                        linear_v = 0.0;
+                        angular_w = 0.0;
+                        println!("Stop");
+                    }
+
+                    KeyCode::Char('q') | KeyCode::Char('Q') => {
+                        break;
+                    }
+
+                    _ => {}
+                }
+            }
+        }
+
+        let v_left = linear_v - (angular_w * track_width / 2.0);
+        let v_right = linear_v + (angular_w * track_width / 2.0);
+
+        // 18 actuator values, each an f64 (8 bytes).
+        // 18 × 8 = 144 bytes.
+        let actuator_values: [f64; 18] = [
+            v_left, v_right,
+            0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0,
+        ];
+
+        let mut buffer = Vec::with_capacity(144);
+
+        for value in actuator_values {
+            buffer.extend_from_slice(&value.to_le_bytes());
+        }
+
+        debug_assert_eq!(buffer.len(), 144);
+
+        socket.send_to(&buffer, sim_target)?;
+
+        // 100 Hz = one transmission every 10 milliseconds.
+        sleep(Duration::from_millis(10));
     }
+
+    disable_raw_mode()?;
+
+    Ok(())
 }
