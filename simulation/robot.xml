@@ -1,44 +1,61 @@
 <mujoco model="invertible_tracked_robot">
     <default>
-        <!-- High longitudinal traction (2.5), lower lateral skid friction (0.3) -->
-        <geom rgba="0.2 0.2 0.25 1" friction="2.5 0.3 0.1"/>
-        <joint type="hinge" damping="0.3" armature="0.01"/>
-        <velocity kv="120" forcerange="-60 60"/>
+        <!-- Soft contact parameters (solref/solimp) prevent ground bouncing -->
+        <geom rgba="0.2 0.2 0.25 1" friction="2.0 0.3 0.1" solref="0.02 1" solimp="0.9 0.95 0.001"/>
+        <!-- Increased damping and armature absorb high-frequency solver jitter -->
+        <joint type="hinge" damping="0.8" armature="0.05"/>
+        <!-- Reduced kv to 25 for stable zero-velocity holding -->
+        <velocity kv="25" forcerange="-60 60"/>
     </default>
 
     <worldbody>
-        <body name="torso" pos="0 0 0.09">
+        <body name="torso" pos="0 0 0.062">
             <freejoint name="root"/>
 
-            <!-- Centered forward camera for symmetrical body layout -->
+            <!-- Centered forward camera -->
             <camera name="front_cam" pos="0.22 0 0.0" xyaxes="0 -1 0 0 0 1"/>
 
-            <!-- Slim chassis box (Thickness = 0.07m) -->
-            <geom name="chassis" type="box" size="0.22 0.14 0.035" rgba="0.75 0.75 0.8 1" mass="6.0"/>
+            <!-- Central Chassis Box -->
+            <geom name="chassis" type="box" size="0.22 0.12 0.035" rgba="0.75 0.75 0.8 1" mass="5.0" contype="0" conaffinity="0"/>
 
-            <!-- LEFT TRACK DRIVE WHEELS (+Y) - Radius 0.06m extends above and below chassis -->
+            <!-- ================= LEFT TRACK MODULE (+Y) ================= -->
+            <geom name="left_side_plate" type="box" size="0.21 0.005 0.045" pos="0 0.21 0" rgba="0.6 0.6 0.65 1" mass="0.4" contype="0" conaffinity="0"/>
+            <geom name="left_inner_plate" type="box" size="0.21 0.005 0.045" pos="0 0.15 0" rgba="0.5 0.5 0.55 1" mass="0.4" contype="0" conaffinity="0"/>
+            <geom name="left_tread_top" type="box" size="0.18 0.032 0.004" pos="0 0.18 0.06" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
+            <geom name="left_tread_bottom" type="box" size="0.18 0.032 0.004" pos="0 0.18 -0.06" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
+            <geom name="left_tread_front" type="cylinder" size="0.062 0.032" pos="0.16 0.18 0" euler="90 0 0" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
+            <geom name="left_tread_rear" type="cylinder" size="0.062 0.032" pos="-0.16 0.18 0" euler="90 0 0" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
+
+            <!-- Rotating Left Drive Sprockets -->
             <body name="left_front_wheel" pos="0.16 0.18 0">
                 <joint name="left_front_joint" axis="0 1 0"/>
-                <geom type="cylinder" size="0.06 0.03" fromto="0 -0.015 0  0 0.015 0" rgba="0.1 0.1 0.1 1" mass="0.8"/>
+                <geom type="cylinder" size="0.062" fromto="0 -0.015 0  0 0.015 0" rgba="0.25 0.25 0.3 1" mass="0.8"/>
             </body>
             <body name="left_rear_wheel" pos="-0.16 0.18 0">
                 <joint name="left_rear_joint" axis="0 1 0"/>
-                <geom type="cylinder" size="0.06 0.03" fromto="0 -0.015 0  0 0.015 0" rgba="0.1 0.1 0.1 1" mass="0.8"/>
+                <geom type="cylinder" size="0.062" fromto="0 -0.015 0  0 0.015 0" rgba="0.25 0.25 0.3 1" mass="0.8"/>
             </body>
 
-            <!-- RIGHT TRACK DRIVE WHEELS (-Y) -->
+            <!-- ================= RIGHT TRACK MODULE (-Y) ================= -->
+            <geom name="right_side_plate" type="box" size="0.21 0.005 0.045" pos="0 -0.21 0" rgba="0.6 0.6 0.65 1" mass="0.4" contype="0" conaffinity="0"/>
+            <geom name="right_inner_plate" type="box" size="0.21 0.005 0.045" pos="0 -0.15 0" rgba="0.5 0.5 0.55 1" mass="0.4" contype="0" conaffinity="0"/>
+            <geom name="right_tread_top" type="box" size="0.18 0.032 0.004" pos="0 -0.18 0.06" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
+            <geom name="right_tread_bottom" type="box" size="0.18 0.032 0.004" pos="0 -0.18 -0.06" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
+            <geom name="right_tread_front" type="cylinder" size="0.062 0.032" pos="0.16 -0.18 0" euler="90 0 0" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
+            <geom name="right_tread_rear" type="cylinder" size="0.062 0.032" pos="-0.16 -0.18 0" euler="90 0 0" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
+
+            <!-- Rotating Right Drive Sprockets -->
             <body name="right_front_wheel" pos="0.16 -0.18 0">
                 <joint name="right_front_joint" axis="0 1 0"/>
-                <geom type="cylinder" size="0.06 0.03" fromto="0 -0.015 0  0 0.015 0" rgba="0.1 0.1 0.1 1" mass="0.8"/>
+                <geom type="cylinder" size="0.062" fromto="0 -0.015 0  0 0.015 0" rgba="0.25 0.25 0.3 1" mass="0.8"/>
             </body>
             <body name="right_rear_wheel" pos="-0.16 -0.18 0">
                 <joint name="right_rear_joint" axis="0 1 0"/>
-                <geom type="cylinder" size="0.06 0.03" fromto="0 -0.015 0  0 0.015 0" rgba="0.1 0.1 0.1 1" mass="0.8"/>
+                <geom type="cylinder" size="0.062" fromto="0 -0.015 0  0 0.015 0" rgba="0.25 0.25 0.3 1" mass="0.8"/>
             </body>
         </body>
     </worldbody>
 
-    <!-- Velocity Actuators: Actuator 0,1 = Left Track | Actuator 2,3 = Right Track -->
     <actuator>
         <velocity joint="left_front_joint" name="left_drive_f"/>
         <velocity joint="left_rear_joint" name="left_drive_r"/>
