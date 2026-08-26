@@ -1,37 +1,242 @@
 use std::net::UdpSocket;
 use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let socket = UdpSocket::bind("127.0.0.1:0")?;
-    let sim_target = "127.0.0.1:5555";
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 
-    println!("[Movement] Tracked controller online.");
-    println!("[Movement] Streaming 16-byte [v_left, v_right] commands to UDP 5555...\n");
+use serde_json;
+use std::io::{self, Write};
 
-    let start_time = Instant::now();
-    let track_width = 0.36; // Distance between left and right track centers in meters
+mod nav;
 
+use nav::{MovementCommand, MovementState, ObjectDetection, MovementManager, Position, Robot};
+fn read_number(prompt: &str) -> f64 {
     loop {
-        let elapsed = start_time.elapsed().as_secs_f64();
+        print!("{}", prompt);
 
-        // Basic test routine: cycle through drive states every few seconds
-        let (linear_v, angular_w) = match (elapsed as u64) % 12 {
-            0..=3 => (2.0, 0.0),    // Drive straight forward (2.0 m/s)
-            4..=7 => (1.5, 1.2),    // Arc turn right
-            8..=11 => (0.0, 2.5),   // Pivot spin in place
-            _ => (0.0, 0.0),
-        };
+        io::stdout()
+            .flush()
+            .expect("Failed to flush stdout");
 
-        // 1. Explicitly type the outputs as f64
-        let v_left: f64 = linear_v - (angular_w * track_width / 2.0);
-        let v_right: f64 = linear_v + (angular_w * track_width / 2.0);
+        let mut input = String::new();
 
-        let mut buffer = Vec::with_capacity(16);
-        buffer.extend_from_slice(&v_left.to_le_bytes());
-        buffer.extend_from_slice(&v_right.to_le_bytes());
+        io::stdin()
+            .read_line(&mut input)
+            .expect("Failed to read input");
 
-        let _ = socket.send_to(&buffer, sim_target);
-        sleep(Duration::from_millis(10)); // 100 Hz Loop
+        match input.trim().parse::<f64>() {
+            Ok(value) => return value,
+
+            Err(_) => {
+                println!("Please enter a valid number.");
+            }
+        }
     }
 }
+fn read_position(name: &str) -> Position {
+    println!();
+    println!("Enter {} position:", name);
+
+    let x = read_number("x = ");
+    let y = read_number("y = ");
+
+    Position::new(x, y)
+}
+fn read_detection() -> ObjectDetection {
+    println!();
+    println!("Enter object detection JSON.");
+
+    println!(
+        r#"Example:
+{{"object_position":2.0,"object_angle":10.0,"found":true}}"#
+    );
+
+    print!("JSON: ");
+
+    io::stdout()
+        .flush()
+        .expect("Failed to flush stdout");
+
+    let mut input = String::new();
+
+    io::stdin()
+        .read_line(&mut input)
+        .expect("Failed to read JSON");
+
+    match serde_json::from_str::<ObjectDetection>(input.trim()) {
+        Ok(data) => data,
+
+        Err(error) => {
+            println!("Invalid JSON: {}", error);
+
+            ObjectDetection {
+                object_position: 999.0,
+                object_angle: 0.0,
+                found: false,
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------
+// PRINT COMMAND AS JSON
+// ---------------------------------------------------------
+
+fn print_command(command: &MovementCommand) {
+    match serde_json::to_string_pretty(command) {
+        Ok(json) => {
+            println!();
+            println!("========== MOVEMENT OUTPUT ==========");
+            println!("{}", json);
+            println!("=====================================");
+        }
+
+        Err(error) => {
+            println!("Could not serialize command: {}", error);
+        }
+    }
+}
+fn main() {
+    // =================================================
+    // UDP
+    // =================================================
+
+    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+
+    let sim_target = "127.0.0.1:5555";
+
+   println!("========================================");
+    println!("       ARIADNE MOVEMENT MANAGER");
+    println!("========================================");
+
+    // ---------------------------------------------
+    // INPUT
+    // ---------------------------------------------
+
+    let initial_position = read_position("INITIAL");
+
+    let final_position = read_position("FINAL");
+
+    let initial_heading =
+        read_number("Initial robot heading in degrees = ");
+
+    // ---------------------------------------------
+    // CREATE ROBOT
+    // ---------------------------------------------
+
+    let mut robot =
+        Robot::new(initial_position, initial_heading);
+
+    // ---------------------------------------------
+    // CREATE MOVEMENT MANAGER
+    // ---------------------------------------------
+
+    let mut manager =
+        MovementManager::new(final_position);
+
+    println!();
+    println!("Initial robot:");
+    println!(
+        "Position: ({:.2}, {:.2})",
+        robot.position.x,
+        robot.position.y,
+    );
+
+    println!("Heading: {:.2}°", robot.heading);
+
+    println!(
+        "Target: ({:.2}, {:.2})",
+        final_position.x,
+        final_position.y
+    );
+
+    // ---------------------------------------------
+    // SIMULATION
+    // ---------------------------------------------
+
+    println!();
+    println!("Starting simulation...");
+    println!("Press ENTER after every detection update.");
+    println!();
+
+    let dt = 0.1;
+
+    for step in 0..1000 {
+        println!();
+        println!("--------------- STEP {} ---------------", step);
+
+        // -----------------------------------------
+        // Detection department input
+        // -----------------------------------------
+
+        let detection_json = r#"
+    {
+        "object_position": 2.0,
+        "object_angle": 0.0,
+        "found": true
+    }
+    "#;
+
+        let detection: ObjectDetection =
+            serde_json::from_str(detection_json)
+                .expect("Invalid JSON");
+
+        // -----------------------------------------
+        // Movement decision
+        // -----------------------------------------
+
+        let command =
+            manager.update(&mut robot, &detection);
+
+        // -----------------------------------------
+        // Output
+        // -----------------------------------------
+
+        print_command(&command);
+
+        println!(
+            "Robot position: ({:.2}, {:.2})",
+            robot.position.x,
+            robot.position.y
+        );
+
+        println!(
+            "Robot heading: {:.2}°",
+            robot.heading
+        );
+
+        println!(
+            "Distance to target: {:.2} m",
+            robot.position.distance_to(&final_position)
+        );
+
+        // -----------------------------------------
+        // Target reached
+        // -----------------------------------------
+
+        if matches!(
+            command.state,
+            MovementState::Reached
+        ) {
+            println!();
+            println!("========================================");
+            println!("        TARGET REACHED");
+            println!("========================================");
+
+            break;
+        }
+
+        // -----------------------------------------
+        // Simulate wheel movement
+        // -----------------------------------------
+
+        robot.simulate_motion(
+            command.left_velocity,
+            command.right_velocity,
+            dt,
+        );
+    }
+}
+
+    
