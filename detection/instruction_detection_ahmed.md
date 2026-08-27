@@ -79,3 +79,13 @@ test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 
 ### 2. Manual Verification (Saving Frames)
 When a live UDP stream is active, the engine saves 5 paired test frame files spaced 5 seconds apart (`frame_1_rgb.jpg` and `frame_1_depth.png` to `frame_5_rgb.jpg` and `frame_5_depth.png`) for debugging and visual analysis.
+
+---
+
+## PR Status & Verification
+The branch is fully ready for a pull request to `main`:
+1. **Merge Conflict Resolution:** Completed. The merge conflict in `.gitignore` was resolved cleanly.
+2. **Type-Safety & Warnings:** Fixed type mismatches on the branch inside `vision.rs` and added the missing `ctrlc` dependency to `Cargo.toml`. Fixed clippy warnings in `main.rs`.
+3. **Compilation:** The workspace compiles 100% warning-free (note: mujoco-rs requires MUJOCO_DOWNLOAD_DIR env var for full builds).
+4. **Test Suite:** Both negative and positive target tests pass perfectly under automated validation.
+5. **System Integration:** Telemetry format (JSON) is aligned with the `movement` subsystem listener.

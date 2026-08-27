@@ -129,22 +129,22 @@ impl StreamState {
 
         // Escalate if this stream has been degraded for a long time, so
         // sustained partial-fallback operation can't go silently unnoticed.
-        if let Some(since) = self.fallback_since {
-            if since.elapsed() >= EXTENDED_FALLBACK_THRESHOLD {
-                let should_warn = match self.last_extended_warning {
-                    None => true,
-                    Some(last) => last.elapsed() >= EXTENDED_FALLBACK_REPEAT_INTERVAL,
-                };
-                if should_warn {
-                    eprintln!(
-                        "[Detection] CRITICAL: {} stream has been running on static \
-                         fallback data for {:.0}s. Telemetry derived from this stream \
-                         does not reflect real-world conditions. Check sensor connectivity.",
-                        self.label,
-                        since.elapsed().as_secs_f64()
-                    );
-                    self.last_extended_warning = Some(Instant::now());
-                }
+        if let Some(since) = self.fallback_since
+            && since.elapsed() >= EXTENDED_FALLBACK_THRESHOLD
+        {
+            let should_warn = match self.last_extended_warning {
+                None => true,
+                Some(last) => last.elapsed() >= EXTENDED_FALLBACK_REPEAT_INTERVAL,
+            };
+            if should_warn {
+                eprintln!(
+                    "[Detection] CRITICAL: {} stream has been running on static \
+                     fallback data for {:.0}s. Telemetry derived from this stream \
+                     does not reflect real-world conditions. Check sensor connectivity.",
+                    self.label,
+                    since.elapsed().as_secs_f64()
+                );
+                self.last_extended_warning = Some(Instant::now());
             }
         }
     }
