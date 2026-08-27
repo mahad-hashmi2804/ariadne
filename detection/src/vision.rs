@@ -1,7 +1,5 @@
-use image::io::Reader as ImageReader;
-use image::GrayImage;
+use image::load_from_memory;
 use serde::Serialize;
-use std::io::Cursor;
 
 #[derive(Serialize, Debug)]
 pub struct ObstacleTelemetry {
@@ -10,68 +8,52 @@ pub struct ObstacleTelemetry {
     pub angle_deg: f64,
 }
 
-/// Decodes raw PNG bytes into a 16-bit Luma image (depth in millimeters)
-pub fn decode_depth_png(png_bytes: &[u8]) -> Result<GrayImage, Box<dyn std::error::Error>> {
-    let img = ImageReader::new(Cursor::new(png_bytes))
-        .with_guessed_format()?
-        .decode()?;
-
-    // Returns 8-bit image representation for debug/visualization saving
-    Ok(img.to_luma8())
-}
-
-/// Analyzes JPEG color buffer and sample depth map at the object centroid
+/// Analyzes incoming depth PNG & RGB JPEG buffers to detect obstacles in front of the robot.
 pub fn process_sensor_streams(
-    jpeg_bytes: &[u8],
+    _jpeg_bytes: &[u8],
     depth_png_bytes: &[u8],
 ) -> Result<ObstacleTelemetry, Box<dyn std::error::Error>> {
-    // 1. Decode RGB Image
-    let rgb_img = ImageReader::new(Cursor::new(jpeg_bytes))
-        .with_guessed_format()?
-        .decode()?
-        .to_rgb8();
+    // 1. Decode 16-bit single-channel PNG depth buffer (Values are in millimeters)
+    let depth_img = load_from_memory(depth_png_bytes)?.to_luma16();
+    let (width, height) = depth_img.dimensions();
 
-    let (width, height) = rgb_img.dimensions();
+    let center_x = (width / 2) as f64;
+    let mut min_distance_mm = u16::MAX;
+    let mut closest_pixel_x: u32 = width / 2;
+    let mut obstacle_pixel_count = 0;
 
-    // 2. Decode 16-Bit Depth Image (Values are millimeters)
-    let depth_img = ImageReader::new(Cursor::new(depth_png_bytes))
-        .with_guessed_format()?
-        .decode()?
-        .to_luma16();
+    // 2. Define Region of Interest (ROI): Lock horizon window to exclude floor plane
+    let min_x = (width as f64 * 0.25) as u32;
+    let max_x = (width as f64 * 0.75) as u32;
+    let min_y = (height as f64 * 0.25) as u32; // Skip top sky/ceiling noise
+    let max_y = (height as f64 * 0.52) as u32; // Cut off at horizon (strips floor plane at 0.49m)
 
-    let mut red_pixel_count = 0;
-    let mut sum_x: u64 = 0;
-    let mut sum_y: u64 = 0;
+    // Thresholds: Ignore everything under 600mm (0.60m) to purge ground plane returns
+    let min_valid_mm = 600u16;
+    let max_valid_mm = 2500u16;
 
-    // 3. Segment Red Pixels
-    for (x, y, pixel) in rgb_img.enumerate_pixels() {
-        let r = pixel[0] as f32;
-        let g = pixel[1] as f32;
-        let b = pixel[2] as f32;
+    for y in min_y..max_y {
+        for x in min_x..max_x {
+            let depth_mm = depth_img.get_pixel(x, y)[0];
 
-        if r > 140.0 && g < 80.0 && b < 80.0 {
-            red_pixel_count += 1;
-            sum_x += x as u64;
-            sum_y += y as u64;
+            // Filter ground plane reflections and far noise
+            if depth_mm >= min_valid_mm && depth_mm < max_valid_mm {
+                obstacle_pixel_count += 1;
+
+                if depth_mm < min_distance_mm {
+                    min_distance_mm = depth_mm;
+                    closest_pixel_x = x;
+                }
+            }
         }
     }
 
-    // 4. Calculate Spatial Metrics
-    if red_pixel_count > 250 {
-        let centroid_x = (sum_x / red_pixel_count) as u32;
-        let centroid_y = (sum_y / red_pixel_count) as u32;
+    // 3. Evaluate detection result (require at least 50 positive depth pixels to filter sensor noise)
+    if obstacle_pixel_count > 50 {
+        let distance_m = (min_distance_mm as f64) / 1000.0;
 
-        // Clamp centroid pixel coordinates safely within frame dimensions
-        let safe_x = centroid_x.min(width - 1);
-        let safe_y = centroid_y.min(height - 1);
-
-        // Sample true metric distance from depth buffer at object centroid
-        let depth_mm = depth_img.get_pixel(safe_x, safe_y)[0] as f64;
-        let distance_m = depth_mm / 1000.0;
-
-        // Compute horizontal bearing angle relative to center axis (-30° to +30°)
-        let center_x = (width / 2) as f64;
-        let angle_deg = (((safe_x as f64) - center_x) / center_x) * 30.0;
+        // Map pixel X coordinate to relative horizontal bearing (-30° to +30°)
+        let angle_deg = (((closest_pixel_x as f64) - center_x) / center_x) * 30.0;
 
         Ok(ObstacleTelemetry {
             obstacle_detected: true,
