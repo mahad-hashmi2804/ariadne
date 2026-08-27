@@ -1,1 +1,4 @@
-fn main() {}
+fn main() {
+	println!("Hello World and wow I have done it");
+	println!("Hello Mahad in sim branch");
+}

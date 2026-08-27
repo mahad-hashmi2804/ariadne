@@ -62,3 +62,8 @@ Thumbs.db
 
 # Collaborative Review & Progress Tracking file (ignored locally)
 review.md
+
+/detection/Cargo.lock
+/movement/Cargo.lock
+/simulation/Cargo.lock
+/Cargo.lock
