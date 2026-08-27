@@ -1,9 +1,11 @@
 use std::f64::consts::PI;
 use std::net::UdpSocket;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 const CITY_CIRCUIT: &[Point2D] = &[
     Point2D { x: 0.0, y: 0.0 },     // Waypoint 0: Central Plaza
+    Point2D { x: 8.0, y: 0.0 },     // Test Obstacle Location
+    Point2D { x: 0.0, y: 0.0 },     // Test Obstacle Location
     Point2D { x: 0.0, y: 22.0 },    // Waypoint 1: North Avenue
     Point2D { x: 22.0, y: 22.0 },   // Waypoint 2: East Street
     Point2D { x: 22.0, y: -22.0 },  // Waypoint 3: South-East Sector
@@ -52,6 +54,14 @@ impl ImuFrame {
             yaw_rad: floats[12],
         }
     }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ObstacleFrame {
+    pub detected: bool,
+    pub distance_m: f64,
+    pub angle_deg: f64,
+    pub last_seen: Option<Instant>,
 }
 
 pub struct SystemCalibrator {
@@ -114,6 +124,8 @@ pub enum NavState {
     Idle,
     Turning,
     Moving,
+    AvoidingTurn,
+    AvoidingBypass,
     Reached,
 }
 
@@ -132,6 +144,16 @@ pub struct NavigationManager {
     pub angle_tolerance_deg: f64,
     pub distance_tolerance_m: f64,
 
+    // Obstacle Avoidance Metrics
+    pub obstacle: ObstacleFrame,
+    pub critical_obstacle_dist_m: f64,
+    pub avoid_turn_dir: f64,
+    pub avoid_start_heading: f64,
+    pub max_avoid_turn_deg: f64,
+    pub last_obstacle_dist: f64,
+    pub bypass_start_pos: Point2D,
+    pub bypass_target_dist: f64,
+
     // Velocity acceleration limits
     pub current_left_v: f64,
     pub current_right_v: f64,
@@ -143,15 +165,25 @@ impl NavigationManager {
         Self {
             state: NavState::Idle,
             target: None,
-            base_speed: 500.0,             // Cruise velocity (m/s scale)
-            max_turn_speed: 1.4,         // Fast turn speed for large angles (>45 deg)
-            min_turn_speed: 0.25,        // Creep speed to overcome friction near target
-            decel_angle_deg: 45.0,       // Angle at which turning begins to decelerate
-            angle_tolerance_deg: 2.5,    // Lock-in heading tolerance window
-            distance_tolerance_m: 0.30,  // Target arrival radius
+            base_speed: 1.8,
+            max_turn_speed: 1.2,
+            min_turn_speed: 0.25,
+            decel_angle_deg: 45.0,
+            angle_tolerance_deg: 2.5,
+            distance_tolerance_m: 0.30,
+
+            obstacle: ObstacleFrame::default(),
+            critical_obstacle_dist_m: 1.5,
+            avoid_turn_dir: 1.0,
+            avoid_start_heading: 0.0,
+            max_avoid_turn_deg: 45.0,  // Max pivot angle before forcing forward bypass
+            last_obstacle_dist: 1.2,
+            bypass_start_pos: Point2D::default(),
+            bypass_target_dist: 0.0,
+
             current_left_v: 0.0,
             current_right_v: 0.0,
-            max_accel: 100.0,             // Acceleration rate limit
+            max_accel: 15.0,
         }
     }
 
@@ -179,6 +211,74 @@ impl NavigationManager {
             return self.ramp_velocities(0.0, 0.0, dt);
         }
 
+        let has_active_obstacle = self.obstacle.detected
+            && self.obstacle.last_seen.map_or(false, |t| t.elapsed() < Duration::from_millis(400));
+
+        // -----------------------------------------------------------------
+        // OBSTACLE AVOIDANCE STATE MACHINE
+        // -----------------------------------------------------------------
+        match self.state {
+            NavState::AvoidingTurn => {
+                if has_active_obstacle {
+                    self.last_obstacle_dist = self.obstacle.distance_m;
+                }
+
+                let mut turned_deg = (robot.heading - self.avoid_start_heading).abs();
+                if turned_deg > 180.0 { turned_deg = 360.0 - turned_deg; }
+
+                // Exit pivot if obstacle leaves FOV OR if rotated >= 45 degrees
+                if !has_active_obstacle || turned_deg >= self.max_avoid_turn_deg {
+                    self.bypass_start_pos = robot.position;
+                    self.bypass_target_dist = (self.last_obstacle_dist + 0.5).max(1.0);
+                    self.state = NavState::AvoidingBypass;
+
+                    println!(
+                        "\n[AVOIDANCE] Pivot complete ({:.1}° turned). Driving {:.2}m straight to bypass barrier...",
+                        turned_deg, self.bypass_target_dist
+                    );
+                } else {
+                    let turn_cmd = self.max_turn_speed * self.avoid_turn_dir;
+                    return self.ramp_velocities(-turn_cmd, turn_cmd, dt);
+                }
+            }
+
+            NavState::AvoidingBypass => {
+                let driven = (robot.position.x - self.bypass_start_pos.x)
+                    .hypot(robot.position.y - self.bypass_start_pos.y);
+
+                if driven >= self.bypass_target_dist {
+                    println!(
+                        "\n[AVOIDANCE COMPLETE] Cleared {:.2}m. Recalculating path to target from ({:.2}, {:.2})...",
+                        driven, robot.position.x, robot.position.y
+                    );
+                    self.state = NavState::Turning;
+                } else {
+                    let speed = self.base_speed * 0.75;
+                    return self.ramp_velocities(speed, speed, dt);
+                }
+            }
+
+            _ => {
+                if has_active_obstacle && self.obstacle.distance_m < self.critical_obstacle_dist_m {
+                    self.avoid_turn_dir = if self.obstacle.angle_deg >= 0.0 { -1.0 } else { 1.0 };
+                    self.avoid_start_heading = robot.heading;
+                    self.last_obstacle_dist = self.obstacle.distance_m;
+                    self.state = NavState::AvoidingTurn;
+
+                    println!(
+                        "\n[AVOIDANCE TRIGGERED] Obstacle at {:.2}m (Angle: {:.1}°). Pivoting away...",
+                        self.obstacle.distance_m, self.obstacle.angle_deg
+                    );
+
+                    let turn_cmd = self.max_turn_speed * self.avoid_turn_dir;
+                    return self.ramp_velocities(-turn_cmd, turn_cmd, dt);
+                }
+            }
+        }
+
+        // -----------------------------------------------------------------
+        // STANDARD WAYPOINT NAVIGATION ENGINE
+        // -----------------------------------------------------------------
         let target_angle_rad = dy.atan2(dx);
         let target_angle_deg = target_angle_rad * (180.0 / PI);
 
@@ -192,8 +292,6 @@ impl NavigationManager {
                     self.state = NavState::Moving;
                     (self.base_speed, self.base_speed)
                 } else {
-                    // Proportional Deceleration Curve:
-                    // Scale from max_turn_speed down to min_turn_speed over decel_angle_deg
                     let scale = (angle_diff.abs() / self.decel_angle_deg).clamp(0.0, 1.0);
                     let dynamic_turn_speed = self.min_turn_speed + (self.max_turn_speed - self.min_turn_speed) * scale;
 
@@ -261,9 +359,41 @@ fn parse_target_json(payload: &str) -> Option<Point2D> {
     }
 }
 
+fn parse_obstacle_json(payload: &str) -> Option<ObstacleFrame> {
+    let clean = payload.trim_matches(|c| c == '{' || c == '}' || c == ' ' || c == '\n' || c == '\r');
+    let mut detected = false;
+    let mut distance_m = 0.0;
+    let mut angle_deg = 0.0;
+
+    for kv in clean.split(',') {
+        let parts: Vec<&str> = kv.split(':').collect();
+        if parts.len() == 2 {
+            let key = parts[0].trim().trim_matches('"');
+            let val_str = parts[1].trim();
+            if key == "obstacle_detected" {
+                detected = val_str.parse::<bool>().unwrap_or(false);
+            } else if key == "distance_m" {
+                distance_m = val_str.parse::<f64>().unwrap_or(0.0);
+            } else if key == "angle_deg" {
+                angle_deg = val_str.parse::<f64>().unwrap_or(0.0);
+            }
+        }
+    }
+
+    Some(ObstacleFrame {
+        detected,
+        distance_m,
+        angle_deg,
+        last_seen: Some(Instant::now()),
+    })
+}
+
 fn main() -> std::io::Result<()> {
     let imu_socket = UdpSocket::bind("127.0.0.1:5559")?;
     imu_socket.set_nonblocking(true)?;
+
+    let obstacle_socket = UdpSocket::bind("127.0.0.1:5556")?;
+    obstacle_socket.set_nonblocking(true)?;
 
     let target_socket = UdpSocket::bind("127.0.0.1:5560")?;
     target_socket.set_nonblocking(true)?;
@@ -276,6 +406,7 @@ fn main() -> std::io::Result<()> {
     let mut manager = NavigationManager::new();
 
     let mut imu_buf = [0u8; 52];
+    let mut obstacle_buf = [0u8; 1024];
     let mut target_buf = [0u8; 256];
 
     let mut circuit_idx = 0;
@@ -285,11 +416,26 @@ fn main() -> std::io::Result<()> {
     let mut last_logged_pos = Point2D::default();
     let mut last_logged_heading = 0.0f64;
 
-    println!("[Movement] System active. Listening on UDP 5559 (IMU) & UDP 5560 (Targets)...");
+    println!("[Movement] System active.");
+    println!(" -> Listening for IMU telemetry on UDP 127.0.0.1:5559");
+    println!(" -> Listening for Vision Obstacles on UDP 127.0.0.1:5556");
+    println!(" -> Listening for Click Targets on UDP 127.0.0.1:5560\n");
 
     loop {
         let dt = last_time.elapsed().as_secs_f64();
         last_time = Instant::now();
+
+        while let Ok((amt, _)) = obstacle_socket.recv_from(&mut obstacle_buf) {
+            if let Ok(payload_str) = std::str::from_utf8(&obstacle_buf[..amt]) {
+                if let Some(obs_frame) = parse_obstacle_json(payload_str) {
+                    if obs_frame.detected && obs_frame.distance_m > 0.0 {
+                        manager.obstacle = obs_frame;
+                    } else {
+                        manager.obstacle.detected = false;
+                    }
+                }
+            }
+        }
 
         while let Ok((amt, _)) = target_socket.recv_from(&mut target_buf) {
             if let Ok(payload_str) = std::str::from_utf8(&target_buf[..amt]) {
