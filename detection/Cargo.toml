@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 image = { workspace = true }
-serde = { workspace = true, version = "1.0.0", features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 opencv-rs = { workspace = true }
+ctrlc = "3.4"
