@@ -1,12 +1,12 @@
+import mujoco
+import mujoco.viewer
 import os
 import socket
 import struct
-import time
 import cv2
 import numpy as np
-import mujoco
-import mujoco.viewer
 
+# 1. Locate and Load the Sandbox World Model
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(SCRIPT_DIR, "sandbox_world.xml")
 
@@ -27,8 +27,9 @@ camera_id = model.camera("front_cam").id
 
 # Reduced payload configuration
 EXPECTED_BYTES = 16  # [v_left, v_right]
-FORMAT_STRING = "2d"
+FORMAT_STRING = "<2d"
 
+# 30 FPS Timing Limit
 fps_limit = 30.0
 frame_interval = 1.0 / fps_limit
 last_frame_time = time.time()
@@ -71,6 +72,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             renderer.disable_depth_rendering()
             renderer.update_scene(data, camera=camera_id)
             rgb_frame = renderer.render()
+
             bgr_frame = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR)
             _, jpeg_buf = cv2.imencode('.jpg', bgr_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 50])
             rgb_sock.sendto(jpeg_buf.tobytes(), ("127.0.0.1", 5557))
