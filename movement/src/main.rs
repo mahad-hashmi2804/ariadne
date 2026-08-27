@@ -1,106 +1,514 @@
+use std::f64::consts::PI;
 use std::net::UdpSocket;
-use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+const CITY_CIRCUIT: &[Point2D] = &[
+    Point2D { x: 0.0, y: 0.0 },     // Waypoint 0: Central Plaza
+    Point2D { x: 8.0, y: 0.0 },     // Test Obstacle Location
+    Point2D { x: 0.0, y: 0.0 },     // Test Obstacle Location
+    Point2D { x: 0.0, y: 22.0 },    // Waypoint 1: North Avenue
+    Point2D { x: 22.0, y: 22.0 },   // Waypoint 2: East Street
+    Point2D { x: 22.0, y: -22.0 },  // Waypoint 3: South-East Sector
+    Point2D { x: 0.0, y: -22.0 },   // Waypoint 4: South Avenue
+    Point2D { x: -5.0, y: 4.5 },    // Waypoint 5: North-West Rubble Alley
+];
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let socket = UdpSocket::bind("127.0.0.1:0")?;
-    let sim_target = "127.0.0.1:5555";
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct Point2D {
+    pub x: f64,
+    pub y: f64,
+}
 
-    println!("[Movement] Tracked controller online.");
-    println!("[Movement] UDP actuator sender: 18 x f64 = 144 bytes");
-    println!("[Movement] Sending commands to 127.0.0.1:5555 at 100 Hz.");
-    println!("[Movement] Keyboard controls:");
-    println!("W = Forward");
-    println!("S = Backward");
-    println!("A = Left");
-    println!("D = Right");
-    println!("Space = Stop");
-    println!("Q = Quit\n");
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RobotPose {
+    pub position: Point2D,
+    pub heading: f64,
+}
 
-    enable_raw_mode()?;
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ImuFrame {
+    pub timestamp: f32,
+    pub accel: [f32; 3],
+    pub gyro: [f32; 3],
+    pub mag: [f32; 3],
+    pub pos_x: f32,
+    pub pos_y: f32,
+    pub yaw_rad: f32,
+}
 
-    let track_width = 0.36;
-    let mut linear_v: f64 = 0.0;
-    let mut angular_w: f64 = 0.0;
+impl ImuFrame {
+    pub fn parse(buf: &[u8; 52]) -> Self {
+        let mut floats = [0.0f32; 13];
+        for i in 0..13 {
+            let chunk = &buf[i * 4..(i + 1) * 4];
+            floats[i] = f32::from_le_bytes(chunk.try_into().unwrap());
+        }
 
-    loop {
-        if event::poll(Duration::from_millis(1))? {
-            if let Event::Key(key_event) = event::read()? {
-                if key_event.kind != KeyEventKind::Press {
-                    continue;
+        Self {
+            timestamp: floats[0],
+            accel: [floats[1], floats[2], floats[3]],
+            gyro: [floats[4], floats[5], floats[6]],
+            mag: [floats[7], floats[8], floats[9]],
+            pos_x: floats[10],
+            pos_y: floats[11],
+            yaw_rad: floats[12],
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ObstacleFrame {
+    pub detected: bool,
+    pub distance_m: f64,
+    pub angle_deg: f64,
+    pub last_seen: Option<Instant>,
+}
+
+pub struct SystemCalibrator {
+    samples_required: usize,
+    collected_samples: Vec<ImuFrame>,
+    pub gyro_bias_z: f64,
+    pub is_calibrated: bool,
+}
+
+impl SystemCalibrator {
+    pub fn new(samples: usize) -> Self {
+        Self {
+            samples_required: samples,
+            collected_samples: Vec::with_capacity(samples),
+            gyro_bias_z: 0.0,
+            is_calibrated: false,
+        }
+    }
+
+    pub fn add_sample(&mut self, frame: ImuFrame, robot: &mut RobotPose) -> bool {
+        if self.is_calibrated {
+            return true;
+        }
+
+        self.collected_samples.push(frame);
+        print!(
+            "\r[CALIBRATING] Sampling IMU & Pose... ({}/{})",
+            self.collected_samples.len(),
+            self.samples_required
+        );
+
+        if self.collected_samples.len() >= self.samples_required {
+            let sum_gz: f64 = self.collected_samples.iter().map(|f| f.gyro[2] as f64).sum();
+            self.gyro_bias_z = sum_gz / (self.collected_samples.len() as f64);
+
+            let last_frame = self.collected_samples.last().unwrap();
+            robot.position.x = last_frame.pos_x as f64;
+            robot.position.y = last_frame.pos_y as f64;
+
+            let mut init_heading = (last_frame.yaw_rad as f64) * (180.0 / PI);
+            while init_heading > 180.0 { init_heading -= 360.0; }
+            while init_heading < -180.0 { init_heading += 360.0; }
+            robot.heading = init_heading;
+
+            self.is_calibrated = true;
+            println!("\n[CALIBRATION COMPLETE]");
+            println!(" -> Gyro Z Bias: {:.6} rad/s", self.gyro_bias_z);
+            println!(
+                " -> Spawn Pose Synced: ({:.2}, {:.2}) @ {:.1}°\n",
+                robot.position.x, robot.position.y, robot.heading
+            );
+        }
+
+        self.is_calibrated
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum NavState {
+    Idle,
+    Turning,
+    Moving,
+    AvoidingTurn,
+    AvoidingBypass,
+    Reached,
+}
+
+pub struct NavCommand {
+    pub left_velocity: f64,
+    pub right_velocity: f64,
+}
+
+pub struct NavigationManager {
+    pub state: NavState,
+    pub target: Option<Point2D>,
+    pub base_speed: f64,
+    pub max_turn_speed: f64,
+    pub min_turn_speed: f64,
+    pub decel_angle_deg: f64,
+    pub angle_tolerance_deg: f64,
+    pub distance_tolerance_m: f64,
+
+    // Obstacle Avoidance Metrics
+    pub obstacle: ObstacleFrame,
+    pub critical_obstacle_dist_m: f64,
+    pub avoid_turn_dir: f64,
+    pub avoid_start_heading: f64,
+    pub max_avoid_turn_deg: f64,
+    pub last_obstacle_dist: f64,
+    pub bypass_start_pos: Point2D,
+    pub bypass_target_dist: f64,
+
+    // Velocity acceleration limits
+    pub current_left_v: f64,
+    pub current_right_v: f64,
+    pub max_accel: f64,
+}
+
+impl NavigationManager {
+    pub fn new() -> Self {
+        Self {
+            state: NavState::Idle,
+            target: None,
+            base_speed: 1.8,
+            max_turn_speed: 1.2,
+            min_turn_speed: 0.25,
+            decel_angle_deg: 45.0,
+            angle_tolerance_deg: 2.5,
+            distance_tolerance_m: 0.30,
+
+            obstacle: ObstacleFrame::default(),
+            critical_obstacle_dist_m: 1.5,
+            avoid_turn_dir: 1.0,
+            avoid_start_heading: 0.0,
+            max_avoid_turn_deg: 45.0,  // Max pivot angle before forcing forward bypass
+            last_obstacle_dist: 1.2,
+            bypass_start_pos: Point2D::default(),
+            bypass_target_dist: 0.0,
+
+            current_left_v: 0.0,
+            current_right_v: 0.0,
+            max_accel: 15.0,
+        }
+    }
+
+    pub fn set_target(&mut self, target: Point2D) {
+        self.target = Some(target);
+        self.state = NavState::Turning;
+    }
+
+    pub fn update(&mut self, robot: &RobotPose, dt: f64) -> NavCommand {
+        let target = match self.target {
+            Some(t) => t,
+            None => {
+                self.state = NavState::Idle;
+                return self.ramp_velocities(0.0, 0.0, dt);
+            }
+        };
+
+        let dx = target.x - robot.position.x;
+        let dy = target.y - robot.position.y;
+        let dist = (dx * dx + dy * dy).sqrt();
+
+        if dist < self.distance_tolerance_m {
+            self.state = NavState::Reached;
+            self.target = None;
+            return self.ramp_velocities(0.0, 0.0, dt);
+        }
+
+        let has_active_obstacle = self.obstacle.detected
+            && self.obstacle.last_seen.map_or(false, |t| t.elapsed() < Duration::from_millis(400));
+
+        // -----------------------------------------------------------------
+        // OBSTACLE AVOIDANCE STATE MACHINE
+        // -----------------------------------------------------------------
+        match self.state {
+            NavState::AvoidingTurn => {
+                if has_active_obstacle {
+                    self.last_obstacle_dist = self.obstacle.distance_m;
                 }
 
-                match key_event.code {
-                    KeyCode::Char('w') | KeyCode::Char('W') => {
-                        linear_v = 2.0;
-                        angular_w = 0.0;
-                        println!("Forward");
-                    }
+                let mut turned_deg = (robot.heading - self.avoid_start_heading).abs();
+                if turned_deg > 180.0 { turned_deg = 360.0 - turned_deg; }
 
-                    KeyCode::Char('s') | KeyCode::Char('S') => {
-                        linear_v = -2.0;
-                        angular_w = 0.0;
-                        println!("Backward");
-                    }
+                // Exit pivot if obstacle leaves FOV OR if rotated >= 45 degrees
+                if !has_active_obstacle || turned_deg >= self.max_avoid_turn_deg {
+                    self.bypass_start_pos = robot.position;
+                    self.bypass_target_dist = (self.last_obstacle_dist + 0.5).max(1.0);
+                    self.state = NavState::AvoidingBypass;
 
-                    KeyCode::Char('a') | KeyCode::Char('A') => {
-                        linear_v = 0.0;
-                        angular_w = -2.5;
-                        println!("Left");
-                    }
+                    println!(
+                        "\n[AVOIDANCE] Pivot complete ({:.1}° turned). Driving {:.2}m straight to bypass barrier...",
+                        turned_deg, self.bypass_target_dist
+                    );
+                } else {
+                    let turn_cmd = self.max_turn_speed * self.avoid_turn_dir;
+                    return self.ramp_velocities(-turn_cmd, turn_cmd, dt);
+                }
+            }
 
-                    KeyCode::Char('d') | KeyCode::Char('D') => {
-                        linear_v = 0.0;
-                        angular_w = 2.5;
-                        println!("Right");
-                    }
+            NavState::AvoidingBypass => {
+                let driven = (robot.position.x - self.bypass_start_pos.x)
+                    .hypot(robot.position.y - self.bypass_start_pos.y);
 
-                    KeyCode::Char(' ') => {
-                        linear_v = 0.0;
-                        angular_w = 0.0;
-                        println!("Stop");
-                    }
+                if driven >= self.bypass_target_dist {
+                    println!(
+                        "\n[AVOIDANCE COMPLETE] Cleared {:.2}m. Recalculating path to target from ({:.2}, {:.2})...",
+                        driven, robot.position.x, robot.position.y
+                    );
+                    self.state = NavState::Turning;
+                } else {
+                    let speed = self.base_speed * 0.75;
+                    return self.ramp_velocities(speed, speed, dt);
+                }
+            }
 
-                    KeyCode::Char('q') | KeyCode::Char('Q') => {
-                        break;
-                    }
+            _ => {
+                if has_active_obstacle && self.obstacle.distance_m < self.critical_obstacle_dist_m {
+                    self.avoid_turn_dir = if self.obstacle.angle_deg >= 0.0 { -1.0 } else { 1.0 };
+                    self.avoid_start_heading = robot.heading;
+                    self.last_obstacle_dist = self.obstacle.distance_m;
+                    self.state = NavState::AvoidingTurn;
 
-                    _ => {}
+                    println!(
+                        "\n[AVOIDANCE TRIGGERED] Obstacle at {:.2}m (Angle: {:.1}°). Pivoting away...",
+                        self.obstacle.distance_m, self.obstacle.angle_deg
+                    );
+
+                    let turn_cmd = self.max_turn_speed * self.avoid_turn_dir;
+                    return self.ramp_velocities(-turn_cmd, turn_cmd, dt);
                 }
             }
         }
 
-        let v_left = linear_v - (angular_w * track_width / 2.0);
-        let v_right = linear_v + (angular_w * track_width / 2.0);
+        // -----------------------------------------------------------------
+        // STANDARD WAYPOINT NAVIGATION ENGINE
+        // -----------------------------------------------------------------
+        let target_angle_rad = dy.atan2(dx);
+        let target_angle_deg = target_angle_rad * (180.0 / PI);
 
-        // 18 actuator values, each an f64 (8 bytes).
-        // 18 × 8 = 144 bytes.
-        let actuator_values: [f64; 18] = [
-            v_left, v_right,
-            0.0, 0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, 0.0,
-        ];
+        let mut angle_diff = target_angle_deg - robot.heading;
+        while angle_diff > 180.0 { angle_diff -= 360.0; }
+        while angle_diff < -180.0 { angle_diff += 360.0; }
 
-        let mut buffer = Vec::with_capacity(144);
+        let (target_left, target_right) = match self.state {
+            NavState::Turning => {
+                if angle_diff.abs() <= self.angle_tolerance_deg {
+                    self.state = NavState::Moving;
+                    (self.base_speed, self.base_speed)
+                } else {
+                    let scale = (angle_diff.abs() / self.decel_angle_deg).clamp(0.0, 1.0);
+                    let dynamic_turn_speed = self.min_turn_speed + (self.max_turn_speed - self.min_turn_speed) * scale;
 
-        for value in actuator_values {
-            buffer.extend_from_slice(&value.to_le_bytes());
-        }
+                    if angle_diff > 0.0 {
+                        (-dynamic_turn_speed, dynamic_turn_speed)
+                    } else {
+                        (dynamic_turn_speed, -dynamic_turn_speed)
+                    }
+                }
+            }
+            NavState::Moving => {
+                if angle_diff.abs() > self.angle_tolerance_deg * 3.0 {
+                    self.state = NavState::Turning;
+                    (0.0, 0.0)
+                } else {
+                    let k_p = 0.02;
+                    let steering = angle_diff * k_p;
+                    (
+                        (self.base_speed - steering).clamp(-2.5, 2.5),
+                        (self.base_speed + steering).clamp(-2.5, 2.5),
+                    )
+                }
+            }
+            _ => (0.0, 0.0),
+        };
 
-        debug_assert_eq!(buffer.len(), 144);
-
-        socket.send_to(&buffer, sim_target)?;
-
-        // 100 Hz = one transmission every 10 milliseconds.
-        sleep(Duration::from_millis(10));
+        self.ramp_velocities(target_left, target_right, dt)
     }
 
-    disable_raw_mode()?;
+    fn ramp_velocities(&mut self, target_left: f64, target_right: f64, dt: f64) -> NavCommand {
+        let max_step = self.max_accel * dt;
 
-    Ok(())
+        let d_left = target_left - self.current_left_v;
+        self.current_left_v += d_left.clamp(-max_step, max_step);
+
+        let d_right = target_right - self.current_right_v;
+        self.current_right_v += d_right.clamp(-max_step, max_step);
+
+        NavCommand {
+            left_velocity: self.current_left_v,
+            right_velocity: self.current_right_v,
+        }
+    }
+}
+
+fn parse_target_json(payload: &str) -> Option<Point2D> {
+    let clean = payload.trim_matches(|c| c == '{' || c == '}' || c == ' ' || c == '\n' || c == '\r');
+    let mut x = None;
+    let mut y = None;
+
+    for kv in clean.split(',') {
+        let parts: Vec<&str> = kv.split(':').collect();
+        if parts.len() == 2 {
+            let key = parts[0].trim().trim_matches('"');
+            let val: f64 = parts[1].trim().parse().ok()?;
+            if key == "x" { x = Some(val); }
+            if key == "y" { y = Some(val); }
+        }
+    }
+
+    if let (Some(x), Some(y)) = (x, y) {
+        Some(Point2D { x, y })
+    } else {
+        None
+    }
+}
+
+fn parse_obstacle_json(payload: &str) -> Option<ObstacleFrame> {
+    let clean = payload.trim_matches(|c| c == '{' || c == '}' || c == ' ' || c == '\n' || c == '\r');
+    let mut detected = false;
+    let mut distance_m = 0.0;
+    let mut angle_deg = 0.0;
+
+    for kv in clean.split(',') {
+        let parts: Vec<&str> = kv.split(':').collect();
+        if parts.len() == 2 {
+            let key = parts[0].trim().trim_matches('"');
+            let val_str = parts[1].trim();
+            if key == "obstacle_detected" {
+                detected = val_str.parse::<bool>().unwrap_or(false);
+            } else if key == "distance_m" {
+                distance_m = val_str.parse::<f64>().unwrap_or(0.0);
+            } else if key == "angle_deg" {
+                angle_deg = val_str.parse::<f64>().unwrap_or(0.0);
+            }
+        }
+    }
+
+    Some(ObstacleFrame {
+        detected,
+        distance_m,
+        angle_deg,
+        last_seen: Some(Instant::now()),
+    })
+}
+
+fn main() -> std::io::Result<()> {
+    let imu_socket = UdpSocket::bind("127.0.0.1:5559")?;
+    imu_socket.set_nonblocking(true)?;
+
+    let obstacle_socket = UdpSocket::bind("127.0.0.1:5556")?;
+    obstacle_socket.set_nonblocking(true)?;
+
+    let target_socket = UdpSocket::bind("127.0.0.1:5560")?;
+    target_socket.set_nonblocking(true)?;
+
+    let send_socket = UdpSocket::bind("127.0.0.1:0")?;
+    let sim_target = "127.0.0.1:5555";
+
+    let mut robot = RobotPose::default();
+    let mut calibrator = SystemCalibrator::new(50);
+    let mut manager = NavigationManager::new();
+
+    let mut imu_buf = [0u8; 52];
+    let mut obstacle_buf = [0u8; 1024];
+    let mut target_buf = [0u8; 256];
+
+    let mut circuit_idx = 0;
+    let mut last_time = Instant::now();
+
+    let mut last_logged_state = NavState::Idle;
+    let mut last_logged_pos = Point2D::default();
+    let mut last_logged_heading = 0.0f64;
+
+    println!("[Movement] System active.");
+    println!(" -> Listening for IMU telemetry on UDP 127.0.0.1:5559");
+    println!(" -> Listening for Vision Obstacles on UDP 127.0.0.1:5556");
+    println!(" -> Listening for Click Targets on UDP 127.0.0.1:5560\n");
+
+    loop {
+        let dt = last_time.elapsed().as_secs_f64();
+        last_time = Instant::now();
+
+        while let Ok((amt, _)) = obstacle_socket.recv_from(&mut obstacle_buf) {
+            if let Ok(payload_str) = std::str::from_utf8(&obstacle_buf[..amt]) {
+                if let Some(obs_frame) = parse_obstacle_json(payload_str) {
+                    if obs_frame.detected && obs_frame.distance_m > 0.0 {
+                        manager.obstacle = obs_frame;
+                    } else {
+                        manager.obstacle.detected = false;
+                    }
+                }
+            }
+        }
+
+        while let Ok((amt, _)) = target_socket.recv_from(&mut target_buf) {
+            if let Ok(payload_str) = std::str::from_utf8(&target_buf[..amt]) {
+                if let Some(custom_target) = parse_target_json(payload_str) {
+                    println!(
+                        "\n[CUSTOM TARGET OVERRIDE] Target updated to Coordinates: ({:.2}, {:.2})",
+                        custom_target.x, custom_target.y
+                    );
+                    manager.set_target(custom_target);
+                }
+            }
+        }
+
+        while let Ok((amt, _)) = imu_socket.recv_from(&mut imu_buf) {
+            if amt == 52 {
+                let frame = ImuFrame::parse(&imu_buf);
+
+                if !calibrator.is_calibrated {
+                    let calibrated_now = calibrator.add_sample(frame, &mut robot);
+                    if calibrated_now {
+                        let initial_target = CITY_CIRCUIT[circuit_idx];
+                        println!(
+                            "[CIRCUIT START] Autonomous patrol active. Goal #0: ({:.2}, {:.2})",
+                            initial_target.x, initial_target.y
+                        );
+                        manager.set_target(initial_target);
+                    }
+                } else {
+                    robot.position.x = frame.pos_x as f64;
+                    robot.position.y = frame.pos_y as f64;
+
+                    let mut current_heading = (frame.yaw_rad as f64) * (180.0 / PI);
+                    while current_heading > 180.0 { current_heading -= 360.0; }
+                    while current_heading < -180.0 { current_heading += 360.0; }
+                    robot.heading = current_heading;
+                }
+            }
+        }
+
+        if calibrator.is_calibrated {
+            let command = manager.update(&robot, dt);
+
+            if manager.state == NavState::Reached {
+                circuit_idx = (circuit_idx + 1) % CITY_CIRCUIT.len();
+                let next_target = CITY_CIRCUIT[circuit_idx];
+                println!(
+                    "\n[CIRCUIT ADVANCE] Waypoint Reached! Advancing to Goal #{}: ({:.2}, {:.2})",
+                    circuit_idx, next_target.x, next_target.y
+                );
+                manager.set_target(next_target);
+            }
+
+            let mut buffer = [0u8; 16];
+            buffer[0..8].copy_from_slice(&command.left_velocity.to_le_bytes());
+            buffer[8..16].copy_from_slice(&command.right_velocity.to_le_bytes());
+            let _ = send_socket.send_to(&buffer, sim_target);
+
+            let pos_delta = (robot.position.x - last_logged_pos.x).hypot(robot.position.y - last_logged_pos.y);
+            let heading_delta = (robot.heading - last_logged_heading).abs();
+
+            if manager.state != last_logged_state || pos_delta > 0.05 || heading_delta > 0.5 {
+                if let Some(target) = manager.target {
+                    println!(
+                        "[NAV] State: {:?} | Pos: ({:.2}, {:.2}) | Heading: {:.1}° | Target: ({:.2}, {:.2})",
+                        manager.state, robot.position.x, robot.position.y, robot.heading, target.x, target.y
+                    );
+                }
+                last_logged_state = manager.state;
+                last_logged_pos = robot.position;
+                last_logged_heading = robot.heading;
+            }
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
 }
