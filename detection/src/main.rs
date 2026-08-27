@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io::Write;
 use std::net::UdpSocket;
 use std::panic::{self, AssertUnwindSafe};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -174,13 +174,13 @@ impl FallbackCache {
     /// itself and can place next to the executable — fallback assets MUST be
     /// read from the current working directory too, or generation and
     /// loading will silently point at two different places.
-    fn load() -> Self {
-        let rgb_path = PathBuf::from(FALLBACK_RGB_FILENAME);
-        let depth_path = PathBuf::from(FALLBACK_DEPTH_FILENAME);
+    fn load(base_dir: &Path) -> Self {
+        let rgb_path = base_dir.join(FALLBACK_RGB_FILENAME);
+        let depth_path = base_dir.join(FALLBACK_DEPTH_FILENAME);
 
         if !rgb_path.exists() || !depth_path.exists() {
             println!("[Detection] Static fallback files missing. Generating default targets...");
-            if let Err(e) = create_default_fallback_images() {
+            if let Err(e) = create_default_fallback_images(base_dir) {
                 eprintln!(
                     "[Detection] WARNING: failed to generate fallback images: {}. \
                      Fallback mode will be unavailable until this is resolved.",
@@ -200,12 +200,12 @@ impl FallbackCache {
     }
 
     /// Re-attempt loading if a fallback asset was missing at startup.
-    fn refresh_if_missing(&mut self) {
+    fn refresh_if_missing(&mut self, base_dir: &Path) {
         if self.rgb.is_none() {
-            self.rgb = std::fs::read(FALLBACK_RGB_FILENAME).ok();
+            self.rgb = std::fs::read(base_dir.join(FALLBACK_RGB_FILENAME)).ok();
         }
         if self.depth.is_none() {
-            self.depth = std::fs::read(FALLBACK_DEPTH_FILENAME).ok();
+            self.depth = std::fs::read(base_dir.join(FALLBACK_DEPTH_FILENAME)).ok();
         }
     }
 }
@@ -243,6 +243,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     rgb_socket.set_nonblocking(true)?;
     depth_socket.set_nonblocking(true)?;
 
+    // Telemetry Broadcast Socket to Movement (Port 5556)
     let telemetry_socket = UdpSocket::bind("127.0.0.1:0")?;
 
     let base_dir = resolve_base_dir();
@@ -268,7 +269,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut rgb_buf = vec![0u8; MAX_DATAGRAM_SIZE];
     let mut depth_buf = vec![0u8; MAX_DATAGRAM_SIZE];
 
-    let mut fallback_cache = FallbackCache::load();
+    let mut fallback_cache = FallbackCache::load(&base_dir);
 
     let mut rgb_state = StreamState::new("RGB");
     let mut depth_state = StreamState::new("Depth");
@@ -291,7 +292,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if rgb_state.is_stale() || depth_state.is_stale() {
             // Only worth trying to (re)load missing fallback assets if we
             // actually need them right now.
-            fallback_cache.refresh_if_missing();
+            fallback_cache.refresh_if_missing(&base_dir);
         }
         rgb_state.engage_fallback_if_needed(&fallback_cache.rgb);
         depth_state.engage_fallback_if_needed(&fallback_cache.depth);
