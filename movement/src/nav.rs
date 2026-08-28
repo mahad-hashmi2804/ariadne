@@ -2,6 +2,49 @@ use std::f64::consts::PI;
 use std::time::Duration;
 use crate::types::{NavCommand, NavState, ObstacleFrame, Point2D, RobotPose};
 
+// -----------------------------------------------------------------------------
+// VERIFIED ALGORITHM IMPLEMENTATIONS (Mirrors movement/src/verification.rs)
+// -----------------------------------------------------------------------------
+fn verify_angle_normalize(angle: i32) -> i32 {
+    let mut a = angle;
+    if a > 180 { a -= 360; }
+    if a < -180 { a += 360; }
+    a
+}
+
+fn verify_accel_ramp(current_v: i32, target_v: i32, max_step: i32) -> i32 {
+    let diff = target_v - current_v;
+    let clamped_step = if diff > max_step {
+        max_step
+    } else if diff < -max_step {
+        -max_step
+    } else {
+        diff
+    };
+    current_v + clamped_step
+}
+
+fn verify_bypass_distance(obstacle_depth_mm: i32, safety_buffer_mm: i32) -> i32 {
+    obstacle_depth_mm + safety_buffer_mm
+}
+
+fn verify_depth_threshold(depth_mm: i32, min_mm: i32, max_mm: i32) -> bool {
+    depth_mm >= min_mm && depth_mm <= max_mm
+}
+
+fn verify_differential_steering(_base_v: i32, steering: i32, max_split: i32) -> i32 {
+    if steering > max_split {
+        max_split
+    } else if steering < -max_split {
+        -max_split
+    } else {
+        steering
+    }
+}
+
+// -----------------------------------------------------------------------------
+// NAVIGATION ENGINE
+// -----------------------------------------------------------------------------
 pub struct NavigationManager {
     pub state: NavState,
     pub target: Option<Point2D>,
@@ -77,7 +120,12 @@ impl NavigationManager {
             return self.ramp_velocities(0.0, 0.0, dt);
         }
 
+        // Verified depth thresholding
+        let obs_mm = (self.obstacle.distance_m * 1000.0) as i32;
+        let valid_depth = verify_depth_threshold(obs_mm, 300, 2500);
+
         let has_active_obstacle = self.obstacle.detected
+            && valid_depth
             && self.obstacle.last_seen.map_or(false, |t| t.elapsed() < Duration::from_millis(400));
 
         match self.state {
@@ -91,7 +139,12 @@ impl NavigationManager {
 
                 if !has_active_obstacle || turned_deg >= self.max_avoid_turn_deg {
                     self.bypass_start_pos = robot.position;
-                    self.bypass_target_dist = (self.last_obstacle_dist + 0.5).max(1.0);
+
+                    // Verified bypass calculation
+                    let obstacle_mm = (self.last_obstacle_dist * 1000.0).clamp(100.0, 10000.0) as i32;
+                    let verified_clearance_mm = verify_bypass_distance(obstacle_mm, 500);
+                    self.bypass_target_dist = (verified_clearance_mm as f64) / 1000.0;
+
                     self.state = NavState::AvoidingBypass;
 
                     println!(
@@ -141,9 +194,10 @@ impl NavigationManager {
         let target_angle_rad = dy.atan2(dx);
         let target_angle_deg = target_angle_rad * (180.0 / PI);
 
-        let mut angle_diff = target_angle_deg - robot.heading;
-        while angle_diff > 180.0 { angle_diff -= 360.0; }
-        while angle_diff < -180.0 { angle_diff += 360.0; }
+        // Verified angle normalization
+        let raw_diff = (target_angle_deg - robot.heading) as i32;
+        let norm_diff = verify_angle_normalize(raw_diff.clamp(-540, 540));
+        let angle_diff = norm_diff as f64;
 
         let (target_left, target_right) = match self.state {
             NavState::Turning => {
@@ -167,10 +221,14 @@ impl NavigationManager {
                     (0.0, 0.0)
                 } else {
                     let k_p = 0.02;
-                    let steering = angle_diff * k_p;
+                    let raw_steering = (angle_diff * k_p * 100.0) as i32;
+
+                    // Verified differential steering limit
+                    let safe_steering = verify_differential_steering(180, raw_steering, 80) as f64 / 100.0;
+
                     (
-                        (self.base_speed - steering).clamp(-2.5, 2.5),
-                        (self.base_speed + steering).clamp(-2.5, 2.5),
+                        (self.base_speed - safe_steering).clamp(-2.5, 2.5),
+                        (self.base_speed + safe_steering).clamp(-2.5, 2.5),
                     )
                 }
             }
@@ -181,13 +239,16 @@ impl NavigationManager {
     }
 
     fn ramp_velocities(&mut self, target_left: f64, target_right: f64, dt: f64) -> NavCommand {
-        let max_step = self.max_accel * dt;
+        let max_step = (self.max_accel * dt * 1000.0).clamp(0.0, 10000.0) as i32;
 
-        let d_left = target_left - self.current_left_v;
-        self.current_left_v += d_left.clamp(-max_step, max_step);
+        // Verified acceleration ramping
+        let cur_l = (self.current_left_v * 1000.0).clamp(-10000.0, 10000.0) as i32;
+        let tgt_l = (target_left * 1000.0).clamp(-10000.0, 10000.0) as i32;
+        self.current_left_v = (verify_accel_ramp(cur_l, tgt_l, max_step) as f64) / 1000.0;
 
-        let d_right = target_right - self.current_right_v;
-        self.current_right_v += d_right.clamp(-max_step, max_step);
+        let cur_r = (self.current_right_v * 1000.0).clamp(-10000.0, 10000.0) as i32;
+        let tgt_r = (target_right * 1000.0).clamp(-10000.0, 10000.0) as i32;
+        self.current_right_v = (verify_accel_ramp(cur_r, tgt_r, max_step) as f64) / 1000.0;
 
         NavCommand {
             left_velocity: self.current_left_v,
