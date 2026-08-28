@@ -1,386 +1,197 @@
-use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use crate::types::{NavCommand, NavState, ObstacleFrame, Point2D, RobotPose};
 
-const MAX_WHEEL_SPEED: f64 = 1.0;
-const BASE_SPEED: f64 = 0.7;
+pub struct NavigationManager {
+    pub state: NavState,
+    pub target: Option<Point2D>,
+    pub base_speed: f64,
+    pub max_turn_speed: f64,
+    pub min_turn_speed: f64,
+    pub decel_angle_deg: f64,
+    pub angle_tolerance_deg: f64,
+    pub distance_tolerance_m: f64,
 
-const SAFETY_DISTANCE: f64 = 1.0;
-const OBSTACLE_CLEAR_DISTANCE: f64 = 1.5;
+    pub obstacle: ObstacleFrame,
+    pub critical_obstacle_dist_m: f64,
+    pub avoid_turn_dir: f64,
+    pub avoid_start_heading: f64,
+    pub max_avoid_turn_deg: f64,
+    pub last_obstacle_dist: f64,
+    pub bypass_start_pos: Point2D,
+    pub bypass_target_dist: f64,
 
-const POSITION_TOLERANCE: f64 = 0.15;
-const TURN_GAIN: f64 = 0.015;
-
-// ---------------------------------------------------------
-// BASIC DATA TYPES
-// ---------------------------------------------------------
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct Position {
-    pub x: f64,
-    pub y: f64,
+    pub current_left_v: f64,
+    pub current_right_v: f64,
+    pub max_accel: f64,
 }
 
-impl Position {
-    pub fn new(x: f64, y: f64) -> Self {
-        Self { x, y }
-    }
-
-    pub fn distance_to(&self, other: &Position) -> f64 {
-        let dx = other.x - self.x;
-        let dy = other.y - self.y;
-        (dx * dx + dy * dy).sqrt()
-    }
-}
-
-// ---------------------------------------------------------
-// OBJECT DETECTION INPUT
-// ---------------------------------------------------------
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
-pub struct ObjectDetection {
-    #[serde(alias = "obstacle_detected")]
-    pub found: bool,
-
-    #[serde(alias = "distance_m")]
-    pub object_position: f64,
-
-    #[serde(alias = "angle_deg")]
-    pub object_angle: f64,
-}
-
-impl Default for ObjectDetection {
-    fn default() -> Self {
+impl NavigationManager {
+    pub fn new() -> Self {
         Self {
-            found: false,
-            object_position: 999.0,
-            object_angle: 0.0,
-        }
-    }
-}
+            state: NavState::Idle,
+            target: None,
+            base_speed: 1.8,
+            max_turn_speed: 1.2,
+            min_turn_speed: 0.25,
+            decel_angle_deg: 45.0,
+            angle_tolerance_deg: 2.5,
+            distance_tolerance_m: 0.30,
 
-// ---------------------------------------------------------
-// MOVEMENT ENUMS
-// ---------------------------------------------------------
+            obstacle: ObstacleFrame::default(),
+            critical_obstacle_dist_m: 1.5,
+            avoid_turn_dir: 1.0,
+            avoid_start_heading: 0.0,
+            max_avoid_turn_deg: 45.0,
+            last_obstacle_dist: 1.2,
+            bypass_start_pos: Point2D::default(),
+            bypass_target_dist: 0.0,
 
-#[derive(Debug, Clone, Copy, Serialize)]
-pub enum Direction {
-    Forward,
-    Backward,
-    Left,
-    Right,
-    Stop,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, PartialEq)]
-pub enum MovementState {
-    Idle,
-    Moving,
-    Turning,
-    AvoidingLeft,
-    AvoidingRight,
-    RecoveryBackup,
-    Stopped,
-    Reached,
-}
-
-// ---------------------------------------------------------
-// MOVEMENT COMMAND
-// ---------------------------------------------------------
-
-#[derive(Debug, Serialize)]
-pub struct MovementCommand {
-    pub state: MovementState,
-    pub direction: Direction,
-    pub angle: f64,
-    pub left_velocity: f64,
-    pub right_velocity: f64,
-}
-
-// ---------------------------------------------------------
-// ROBOT
-// ---------------------------------------------------------
-
-pub struct Robot {
-    pub position: Position,
-    pub heading: f64,
-    pub state: MovementState,
-}
-
-impl Robot {
-    pub fn new(position: Position, heading: f64) -> Self {
-        Self {
-            position,
-            heading: normalize_angle(heading),
-            state: MovementState::Idle,
+            current_left_v: 0.0,
+            current_right_v: 0.0,
+            max_accel: 15.0,
         }
     }
 
-    pub fn simulate_motion(
-        &mut self,
-        left_velocity: f64,
-        right_velocity: f64,
-        dt: f64,
-    ) {
-        let linear_velocity = (left_velocity + right_velocity) / 2.0;
-        let angular_velocity = right_velocity - left_velocity;
-
-        self.heading += angular_velocity * 30.0 * dt;
-        self.heading = normalize_angle(self.heading);
-
-        let heading_rad = degrees_to_radians(self.heading);
-
-        self.position.x += linear_velocity * heading_rad.cos() * dt;
-        self.position.y += linear_velocity * heading_rad.sin() * dt;
-    }
-}
-
-// ---------------------------------------------------------
-// MOVEMENT MANAGER
-// ---------------------------------------------------------
-
-pub struct MovementManager {
-    pub target: Position,
-    avoidance_direction: Option<Direction>,
-    avoiding: bool,
-
-    // Timing & State locks
-    state_entry_time: Instant,
-    avoidance_start_time: Option<Instant>,
-    recovery_start_time: Option<Instant>,
-
-    min_state_duration: Duration,    // Prevent chatter (500ms)
-    max_avoidance_timeout: Duration, // Timeout turning after 3s
-    recovery_duration: Duration,     // Run backup maneuver for 1.5s
-}
-
-impl MovementManager {
-    pub fn new(target: Position) -> Self {
-        let now = Instant::now();
-        Self {
-            target,
-            avoidance_direction: None,
-            avoiding: false,
-            state_entry_time: now,
-            avoidance_start_time: None,
-            recovery_start_time: None,
-            min_state_duration: Duration::from_millis(500),
-            max_avoidance_timeout: Duration::from_secs(3),
-            recovery_duration: Duration::from_millis(1500),
-        }
+    pub fn set_target(&mut self, target: Point2D) {
+        self.target = Some(target);
+        self.state = NavState::Turning;
     }
 
-    pub fn update(
-        &mut self,
-        robot: &mut Robot,
-        detection: &ObjectDetection,
-    ) -> MovementCommand {
-        let now = Instant::now();
-        let time_in_state = now.duration_since(self.state_entry_time);
-
-        // 1. Target Reached check
-        let distance_to_target = robot.position.distance_to(&self.target);
-        if distance_to_target <= POSITION_TOLERANCE {
-            robot.state = MovementState::Reached;
-            return MovementCommand {
-                state: MovementState::Reached,
-                direction: Direction::Stop,
-                angle: 0.0,
-                left_velocity: 0.0,
-                right_velocity: 0.0,
-            };
-        }
-
-        // 2. Active Recovery Routine Execution
-        if let Some(rec_start) = self.recovery_start_time {
-            if now.duration_since(rec_start) < self.recovery_duration {
-                robot.state = MovementState::RecoveryBackup;
-                return MovementCommand {
-                    state: MovementState::RecoveryBackup,
-                    direction: Direction::Backward,
-                    angle: 0.0,
-                    left_velocity: -0.4,
-                    right_velocity: -0.4,
-                };
-            } else {
-                // Recovery complete -> Full timer & flag reset
-                self.recovery_start_time = None;
-                self.avoidance_start_time = None;
-                self.avoiding = false;
-                self.avoidance_direction = None;
+    pub fn update(&mut self, robot: &RobotPose, dt: f64) -> NavCommand {
+        let target = match self.target {
+            Some(t) => t,
+            None => {
+                self.state = NavState::Idle;
+                return self.ramp_velocities(0.0, 0.0, dt);
             }
-        }
-
-        // 3. Trigger Recovery if stuck turning too long (> 3.0s)
-        if let Some(start_time) = self.avoidance_start_time {
-            if now.duration_since(start_time) >= self.max_avoidance_timeout {
-                self.recovery_start_time = Some(now);
-                self.avoidance_start_time = None; // Clear to break infinite loop
-                robot.state = MovementState::RecoveryBackup;
-                return MovementCommand {
-                    state: MovementState::RecoveryBackup,
-                    direction: Direction::Backward,
-                    angle: 0.0,
-                    left_velocity: -0.4,
-                    right_velocity: -0.4,
-                };
-            }
-        }
-
-        // 4. Enforce Hysteresis: Hold state for minimum lock duration
-        if time_in_state < self.min_state_duration && self.avoiding {
-            return self.maintain_current_avoidance(robot);
-        }
-
-        // 5. Handle Obstacle Detection
-        if detection.found && detection.object_position <= SAFETY_DISTANCE {
-            return self.handle_obstacle(robot, detection, now);
-        }
-
-        // 6. Clear Avoidance if path is clear
-        if self.avoiding {
-            if !detection.found || detection.object_position >= OBSTACLE_CLEAR_DISTANCE {
-                self.avoiding = false;
-                self.avoidance_direction = None;
-                self.avoidance_start_time = None;
-            }
-        }
-
-        // 7. Normal Navigation
-        self.move_to_target(robot)
-    }
-
-    fn handle_obstacle(
-        &mut self,
-        robot: &mut Robot,
-        detection: &ObjectDetection,
-        now: Instant,
-    ) -> MovementCommand {
-        if self.avoidance_start_time.is_none() {
-            self.avoidance_start_time = Some(now);
-        }
-
-        let direction = if detection.object_angle >= 0.0 {
-            Direction::Right
-        } else {
-            Direction::Left
         };
 
-        self.avoidance_direction = Some(direction);
-        self.avoiding = true;
-        self.state_entry_time = now;
+        let dx = target.x - robot.position.x;
+        let dy = target.y - robot.position.y;
+        let dist = (dx * dx + dy * dy).sqrt();
 
-        match direction {
-            Direction::Left => {
-                robot.state = MovementState::AvoidingLeft;
-                MovementCommand {
-                    state: MovementState::AvoidingLeft,
-                    direction: Direction::Left,
-                    angle: 30.0,
-                    left_velocity: 0.35,
-                    right_velocity: 0.75,
-                }
-            }
-            Direction::Right => {
-                robot.state = MovementState::AvoidingRight;
-                MovementCommand {
-                    state: MovementState::AvoidingRight,
-                    direction: Direction::Right,
-                    angle: -30.0,
-                    left_velocity: 0.75,
-                    right_velocity: 0.35,
-                }
-            }
-            _ => self.stop_command(),
+        if dist < self.distance_tolerance_m {
+            self.state = NavState::Reached;
+            self.target = None;
+            return self.ramp_velocities(0.0, 0.0, dt);
         }
-    }
 
-    fn maintain_current_avoidance(&self, robot: &mut Robot) -> MovementCommand {
-        match self.avoidance_direction {
-            Some(Direction::Left) => {
-                robot.state = MovementState::AvoidingLeft;
-                MovementCommand {
-                    state: MovementState::AvoidingLeft,
-                    direction: Direction::Left,
-                    angle: 30.0,
-                    left_velocity: 0.35,
-                    right_velocity: 0.75,
+        let has_active_obstacle = self.obstacle.detected
+            && self.obstacle.last_seen.map_or(false, |t| t.elapsed() < Duration::from_millis(400));
+
+        match self.state {
+            NavState::AvoidingTurn => {
+                if has_active_obstacle {
+                    self.last_obstacle_dist = self.obstacle.distance_m;
+                }
+
+                let mut turned_deg = (robot.heading - self.avoid_start_heading).abs();
+                if turned_deg > 180.0 { turned_deg = 360.0 - turned_deg; }
+
+                if !has_active_obstacle || turned_deg >= self.max_avoid_turn_deg {
+                    self.bypass_start_pos = robot.position;
+                    self.bypass_target_dist = (self.last_obstacle_dist + 0.5).max(1.0);
+                    self.state = NavState::AvoidingBypass;
+
+                    println!(
+                        "\n[AVOIDANCE] Pivot complete ({:.1}° turned). Driving {:.2}m straight to bypass barrier...",
+                        turned_deg, self.bypass_target_dist
+                    );
+                } else {
+                    let turn_cmd = self.max_turn_speed * self.avoid_turn_dir;
+                    return self.ramp_velocities(-turn_cmd, turn_cmd, dt);
                 }
             }
-            Some(Direction::Right) => {
-                robot.state = MovementState::AvoidingRight;
-                MovementCommand {
-                    state: MovementState::AvoidingRight,
-                    direction: Direction::Right,
-                    angle: -30.0,
-                    left_velocity: 0.75,
-                    right_velocity: 0.35,
+
+            NavState::AvoidingBypass => {
+                let driven = (robot.position.x - self.bypass_start_pos.x)
+                    .hypot(robot.position.y - self.bypass_start_pos.y);
+
+                if driven >= self.bypass_target_dist {
+                    println!(
+                        "\n[AVOIDANCE COMPLETE] Cleared {:.2}m. Recalculating path to target from ({:.2}, {:.2})...",
+                        driven, robot.position.x, robot.position.y
+                    );
+                    self.state = NavState::Turning;
+                } else {
+                    let speed = self.base_speed * 0.75;
+                    return self.ramp_velocities(speed, speed, dt);
                 }
             }
-            _ => self.stop_command(),
+
+            _ => {
+                if has_active_obstacle && self.obstacle.distance_m < self.critical_obstacle_dist_m {
+                    self.avoid_turn_dir = if self.obstacle.angle_deg >= 0.0 { -1.0 } else { 1.0 };
+                    self.avoid_start_heading = robot.heading;
+                    self.last_obstacle_dist = self.obstacle.distance_m;
+                    self.state = NavState::AvoidingTurn;
+
+                    println!(
+                        "\n[AVOIDANCE TRIGGERED] Obstacle at {:.2}m (Angle: {:.1}°). Pivoting away...",
+                        self.obstacle.distance_m, self.obstacle.angle_deg
+                    );
+
+                    let turn_cmd = self.max_turn_speed * self.avoid_turn_dir;
+                    return self.ramp_velocities(-turn_cmd, turn_cmd, dt);
+                }
+            }
         }
-    }
 
-    fn move_to_target(&mut self, robot: &mut Robot) -> MovementCommand {
-        let dx = self.target.x - robot.position.x;
-        let dy = self.target.y - robot.position.y;
+        let target_angle_rad = dy.atan2(dx);
+        let target_angle_deg = target_angle_rad * (180.0 / PI);
 
-        let target_angle = radians_to_degrees(dy.atan2(dx));
-        let heading_error = normalize_angle(target_angle - robot.heading);
+        let mut angle_diff = target_angle_deg - robot.heading;
+        while angle_diff > 180.0 { angle_diff -= 360.0; }
+        while angle_diff < -180.0 { angle_diff += 360.0; }
 
-        let turn = TURN_GAIN * heading_error;
-        let left_velocity = clamp(BASE_SPEED - turn);
-        let right_velocity = clamp(BASE_SPEED + turn);
+        let (target_left, target_right) = match self.state {
+            NavState::Turning => {
+                if angle_diff.abs() <= self.angle_tolerance_deg {
+                    self.state = NavState::Moving;
+                    (self.base_speed, self.base_speed)
+                } else {
+                    let scale = (angle_diff.abs() / self.decel_angle_deg).clamp(0.0, 1.0);
+                    let dynamic_turn_speed = self.min_turn_speed + (self.max_turn_speed - self.min_turn_speed) * scale;
 
-        let direction = if heading_error > 5.0 {
-            robot.state = MovementState::Turning;
-            Direction::Left
-        } else if heading_error < -5.0 {
-            robot.state = MovementState::Turning;
-            Direction::Right
-        } else {
-            robot.state = MovementState::Moving;
-            Direction::Forward
+                    if angle_diff > 0.0 {
+                        (-dynamic_turn_speed, dynamic_turn_speed)
+                    } else {
+                        (dynamic_turn_speed, -dynamic_turn_speed)
+                    }
+                }
+            }
+            NavState::Moving => {
+                if angle_diff.abs() > self.angle_tolerance_deg * 3.0 {
+                    self.state = NavState::Turning;
+                    (0.0, 0.0)
+                } else {
+                    let k_p = 0.02;
+                    let steering = angle_diff * k_p;
+                    (
+                        (self.base_speed - steering).clamp(-2.5, 2.5),
+                        (self.base_speed + steering).clamp(-2.5, 2.5),
+                    )
+                }
+            }
+            _ => (0.0, 0.0),
         };
 
-        MovementCommand {
-            state: robot.state,
-            direction,
-            angle: heading_error,
-            left_velocity,
-            right_velocity,
+        self.ramp_velocities(target_left, target_right, dt)
+    }
+
+    fn ramp_velocities(&mut self, target_left: f64, target_right: f64, dt: f64) -> NavCommand {
+        let max_step = self.max_accel * dt;
+
+        let d_left = target_left - self.current_left_v;
+        self.current_left_v += d_left.clamp(-max_step, max_step);
+
+        let d_right = target_right - self.current_right_v;
+        self.current_right_v += d_right.clamp(-max_step, max_step);
+
+        NavCommand {
+            left_velocity: self.current_left_v,
+            right_velocity: self.current_right_v,
         }
     }
-
-    fn stop_command(&self) -> MovementCommand {
-        MovementCommand {
-            state: MovementState::Stopped,
-            direction: Direction::Stop,
-            angle: 0.0,
-            left_velocity: 0.0,
-            right_velocity: 0.0,
-        }
-    }
-}
-
-fn degrees_to_radians(degrees: f64) -> f64 {
-    degrees * PI / 180.0
-}
-
-fn radians_to_degrees(radians: f64) -> f64 {
-    radians * 180.0 / PI
-}
-
-fn normalize_angle(mut angle: f64) -> f64 {
-    while angle >= 180.0 {
-        angle -= 360.0;
-    }
-    while angle < -180.0 {
-        angle += 360.0;
-    }
-    angle
-}
-
-fn clamp(value: f64) -> f64 {
-    value.clamp(-MAX_WHEEL_SPEED, MAX_WHEEL_SPEED)
 }
