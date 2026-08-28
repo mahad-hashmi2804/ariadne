@@ -3,7 +3,7 @@ use std::f64::consts::PI;
 use std::time::{Duration, Instant};
 
 const MAX_WHEEL_SPEED: f64 = 1.0;
-const BASE_SPEED: f64 = 0.7;
+const BASE_SPEED: f64 = 0.9;
 
 const SAFETY_DISTANCE: f64 = 1.0;
 const OBSTACLE_CLEAR_DISTANCE: f64 = 1.5;
@@ -259,14 +259,22 @@ impl MovementManager {
         if self.avoidance_start_time.is_none() {
             self.avoidance_start_time = Some(now);
         }
+        
+       let direction = match self.avoidance_direction {
+        Some(dir) => dir,
 
-        let direction = if detection.object_angle >= 0.0 {
-            Direction::Right
-        } else {
-            Direction::Left
-        };
+        None => {
+            let dir = if detection.object_angle >= 0.0 {
+                Direction::Right
+            } else {
+                Direction::Left
+            };
 
-        self.avoidance_direction = Some(direction);
+            self.avoidance_direction = Some(dir);
+            dir
+        }
+    };
+
         self.avoiding = true;
         self.state_entry_time = now;
 
