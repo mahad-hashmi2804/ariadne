@@ -1,8 +1,8 @@
 """Ariadne MuJoCo Physics & Vision Engine Gateway.
 
-Provides 3D interactive visualization via GLFW, renders camera streams
-(JPEG RGB & PNG 16-bit Depth), streams 100 Hz binary IMU frames over UDP, and
-converts 2D viewport mouse clicks into 3D world-space target raycasts.
+Provides 3D interactive visualization via GLFW, renders the Depth camera
+stream (PNG), streams 100 Hz binary IMU frames over UDP, and converts 2D
+viewport mouse clicks into 3D world-space target raycasts.
 """
 
 import json
@@ -61,12 +61,12 @@ actuator_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 actuator_sock.bind(("127.0.0.1", 5555))
 actuator_sock.setblocking(False)
 
-rgb_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+# RGB stream removed -- port 5557 is now used for IMU (detection team) instead.
 depth_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 imu_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 target_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-imu_target = ("127.0.0.1", 5559)
+imu_target = ("127.0.0.1", 5559)  # raw 40-byte IMU packet, agreed struct with detection team
 nav_target = ("127.0.0.1", 5560)
 
 EXPECTED_ACTUATOR_BYTES = 16
@@ -195,9 +195,8 @@ glfw.set_scroll_callback(window, scroll_cb)
 
 print("[Simulation] Viewer active.")
 print(" -> Listening for actuator commands on UDP 127.0.0.1:5555")
-print(" -> Streaming RGB JPEG to UDP 127.0.0.1:5557")
 print(" -> Streaming Depth PNG to UDP 127.0.0.1:5558")
-print(" -> Streaming 52-byte IMU payload to UDP 127.0.0.1:5559 (100 Hz)")
+print(" -> Streaming 40-byte raw IMU payload to UDP 127.0.0.1:5559 (100 Hz) [detection team]")
 print(" -> Streaming Click Targets to UDP 127.0.0.1:5560\n")
 
 # =============================================================================
@@ -224,40 +223,27 @@ while not glfw.window_should_close(window):
     mujoco.mj_step(model, data)
     current_time = time.time()
 
-    # Stream IMU & ground-truth pose payload at 100 Hz
+    # Stream raw IMU payload at 100 Hz -> detection team (port 5559)
+    # Agreed struct: <10f little-endian, 40 bytes total:
+    #   [time, accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z, mag_x, mag_y, mag_z]
     if current_time - last_imu_time >= imu_interval:
         sim_t = float(data.time)
         acc = data.sensor("accel").data.astype(np.float32)
         gyro = data.sensor("gyro").data.astype(np.float32)
         mag = data.sensor("mag").data.astype(np.float32)
 
-        real_x = float(data.qpos[0])
-        real_y = float(data.qpos[1])
-
-        w, x, y, z = data.qpos[3], data.qpos[4], data.qpos[5], data.qpos[6]
-        real_yaw = float(math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z)))
-
         imu_packet = struct.pack(
-            "<13f",
+            "<10f",
             sim_t,
             acc[0], acc[1], acc[2],
             gyro[0], gyro[1], gyro[2],
             mag[0], mag[1], mag[2],
-            real_x, real_y, real_yaw
         )
         imu_sock.sendto(imu_packet, imu_target)
         last_imu_time = current_time
 
-    # Stream RGB and Depth vision camera frames at 30 FPS
+    # Stream Depth vision camera frame at 30 FPS (RGB stream removed)
     if current_time - last_frame_time >= frame_interval:
-        renderer.disable_depth_rendering()
-        renderer.update_scene(data, camera=camera_id)
-        rgb_frame = renderer.render()
-        bgr_frame = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR)
-        _, jpeg_buf = cv2.imencode('.jpg', bgr_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 50])
-        if len(jpeg_buf) < 64000:
-            rgb_sock.sendto(jpeg_buf.tobytes(), ("127.0.0.1", 5557))
-
         renderer.enable_depth_rendering()
         renderer.update_scene(data, camera=camera_id)
         depth_frame = renderer.render()
