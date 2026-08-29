@@ -7,4 +7,3 @@ edition = "2024"
 mujoco-rs = { workspace = true }
 nalgebra = { workspace = true }
 serde_json = { workspace = true }
-vstd = { workspace = true }

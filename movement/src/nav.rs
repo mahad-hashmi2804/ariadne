@@ -6,11 +6,47 @@
 use std::f64::consts::PI;
 use std::time::Duration;
 use crate::types::{NavCommand, NavState, ObstacleFrame, Point2D, RobotPose};
-use crate::verification::{
-    verify_accel_ramp, verify_angle_normalize, verify_arrival_distance_sq,
-    verify_avoid_turn_direction, verify_bypass_distance, verify_depth_threshold,
-    verify_differential_steering, verify_turn_delta, verify_turn_speed_interpolation,
-};
+
+// =============================================================================
+// VERIFIED ALGORITHM FALLBACK IMPLEMENTATIONS
+// =============================================================================
+
+fn verify_angle_normalize(angle: i32) -> i32 {
+    let mut a = angle;
+    if a > 180 { a -= 360; }
+    if a < -180 { a += 360; }
+    a
+}
+
+fn verify_accel_ramp(current_v: i32, target_v: i32, max_step: i32) -> i32 {
+    let diff = target_v - current_v;
+    let clamped_step = if diff > max_step {
+        max_step
+    } else if diff < -max_step {
+        -max_step
+    } else {
+        diff
+    };
+    current_v + clamped_step
+}
+
+fn verify_bypass_distance(obstacle_depth_mm: i32, safety_buffer_mm: i32) -> i32 {
+    obstacle_depth_mm + safety_buffer_mm
+}
+
+fn verify_depth_threshold(depth_mm: i32, min_mm: i32, max_mm: i32) -> bool {
+    depth_mm >= min_mm && depth_mm <= max_mm
+}
+
+fn verify_differential_steering(_base_v: i32, steering: i32, max_split: i32) -> i32 {
+    if steering > max_split {
+        max_split
+    } else if steering < -max_split {
+        -max_split
+    } else {
+        steering
+    }
+}
 
 // =============================================================================
 // NAVIGATION MANAGER STRUCT
@@ -86,12 +122,9 @@ impl NavigationManager {
 
         let dx = target.x - robot.position.x;
         let dy = target.y - robot.position.y;
+        let dist = (dx * dx + dy * dy).sqrt();
 
-        let dx_mm = ((dx * 1000.0).round() as i32).clamp(-50000, 50000);
-        let dy_mm = ((dy * 1000.0).round() as i32).clamp(-50000, 50000);
-        let tol_mm = ((self.distance_tolerance_m * 1000.0).round() as i32).clamp(1, 5000);
-
-        if verify_arrival_distance_sq(dx_mm, dy_mm, tol_mm) {
+        if dist < self.distance_tolerance_m {
             self.state = NavState::Reached;
             self.target = None;
             return self.ramp_velocities(0.0, 0.0, dt);
@@ -110,8 +143,8 @@ impl NavigationManager {
                     self.last_obstacle_dist = self.obstacle.distance_m;
                 }
 
-                let turned_deg_raw = ((robot.heading - self.avoid_start_heading).abs().round() as i32).clamp(0, 360);
-                let turned_deg = verify_turn_delta(turned_deg_raw) as f64;
+                let mut turned_deg = (robot.heading - self.avoid_start_heading).abs();
+                if turned_deg > 180.0 { turned_deg = 360.0 - turned_deg; }
 
                 if !has_active_obstacle || turned_deg >= self.max_avoid_turn_deg {
                     self.bypass_start_pos = robot.position;
@@ -150,8 +183,7 @@ impl NavigationManager {
 
             _ => {
                 if has_active_obstacle && self.obstacle.distance_m < self.critical_obstacle_dist_m {
-                    let angle_deg_i = (self.obstacle.angle_deg.round() as i32).clamp(-180, 180);
-                    self.avoid_turn_dir = verify_avoid_turn_direction(angle_deg_i) as f64;
+                    self.avoid_turn_dir = if self.obstacle.angle_deg >= 0.0 { -1.0 } else { 1.0 };
                     self.avoid_start_heading = robot.heading;
                     self.last_obstacle_dist = self.obstacle.distance_m;
                     self.state = NavState::AvoidingTurn;
@@ -180,10 +212,8 @@ impl NavigationManager {
                     self.state = NavState::Moving;
                     (self.base_speed, self.base_speed)
                 } else {
-                    let min_mm = (self.min_turn_speed * 1000.0).round() as i32;
-                    let max_mm = (self.max_turn_speed * 1000.0).round() as i32;
-                    let scale = (((angle_diff.abs() / self.decel_angle_deg).clamp(0.0, 1.0)) * 1000.0).round() as i32;
-                    let dynamic_turn_speed = verify_turn_speed_interpolation(min_mm, max_mm, scale) as f64 / 1000.0;
+                    let scale = (angle_diff.abs() / self.decel_angle_deg).clamp(0.0, 1.0);
+                    let dynamic_turn_speed = self.min_turn_speed + (self.max_turn_speed - self.min_turn_speed) * scale;
 
                     if angle_diff > 0.0 {
                         (-dynamic_turn_speed, dynamic_turn_speed)

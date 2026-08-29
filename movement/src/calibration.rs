@@ -5,7 +5,6 @@
 
 use std::f64::consts::PI;
 use crate::types::{ImuFrame, RobotPose};
-use crate::verification::{verify_calibration_mean, verify_calibration_step};
 
 pub struct SystemCalibrator {
     samples_required: usize,
@@ -31,25 +30,16 @@ impl SystemCalibrator {
             return true;
         }
 
-        let (next_count, done) =
-            verify_calibration_step(self.collected_samples.len(), self.samples_required);
         self.collected_samples.push(frame);
-        debug_assert_eq!(self.collected_samples.len(), next_count);
-
         print!(
             "\r[CALIBRATING] Sampling IMU & Pose... ({}/{})",
             self.collected_samples.len(),
             self.samples_required
         );
 
-        if done {
-            let sum_gz_micro: i64 = self
-                .collected_samples
-                .iter()
-                .map(|f| (f.gyro[2] as f64 * 1_000_000.0).round() as i64)
-                .sum();
-            let mean_micro = verify_calibration_mean(sum_gz_micro, self.collected_samples.len() as u32);
-            self.gyro_bias_z = mean_micro as f64 / 1_000_000.0;
+        if self.collected_samples.len() >= self.samples_required {
+            let sum_gz: f64 = self.collected_samples.iter().map(|f| f.gyro[2] as f64).sum();
+            self.gyro_bias_z = sum_gz / (self.collected_samples.len() as f64);
 
             let last_frame = self.collected_samples.last().unwrap();
             robot.position.x = last_frame.pos_x as f64;

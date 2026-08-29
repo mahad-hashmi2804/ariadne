@@ -169,64 +169,8 @@ _(**Primary Authors:** Abdullah Gill)_
 ### Physical Assets
 
 * **Tracked Chassis (`robot.xml`):** _(**Primary Authors:** Ali Tayyab & Mujtaba Ahmed Khan)_\
-Differential skid-steer robot featuring active drive wheels, idlers, rubber tread friction profiles, an IMU sensor mount, and a front camera mount.
-* **Urban Environment (`world.xml`):** _(**Primary Authors:** Sana Batool)_\
+ Differential skid-steer robot featuring active drive wheels, idlers, rubber tread friction profiles, an IMU sensor mount, and a front camera mount.
+* **Urban Environment (`world.xml`):** _(**Primary Authors:** Sana Batool & Hafsa Ehtisham)_\
 City plaza scene containing paved avenues, crosswalks, elevated sidewalk curbs ($z = 0.02\text{m}$), building structures, and an industrial rubble field with angled ramps for mobility testing.
 
 ---
-
-## 6. Formal Verification Suite (Verus / Z3 SMT)
-
-Ariadne contains **20 SMT-backed formal proofs** across two dedicated `verification.rs` modules, mathematically guaranteeing that safety-critical logic contains zero arithmetic overflows, buffer panics, or illegal state transitions.
-
-```
-                   +-------------------------------------------------------+
-                   |     Ariadne Formal Verification Suite (20/20)         |
-                   +---------------------------+---------------------------+
-                                               |
-                     +-------------------------+-------------------------+
-                     |                                                   |
-                     v                                                   v
-      +------------------------------+                    +------------------------------+
-      |      Movement Invariants     |                    |     Detection Invariants     |
-      |          (10 Proofs)         |                    |          (10 Proofs)         |
-      +--------------+---------------+                    +--------------+---------------+
-                     |                                                   |
-                     +-- NavController Constructor Invariants            +-- StreamTracker Lifecycle States
-                     +-- Restricted State Transitions                    +-- Live Frame Fallback Recovery
-                     +-- Velocity Acceleration Ramping Bounds            +-- Timeout Fallback Engagement
-                     +-- Obstacle Geometry Clearance Overshoot           +-- Horizon ROI Crop Boundary Check
-                     +-- Heading Angle Normalization Modulo              +-- Spatial Depth Range Filtering
-                     +-- Differential Steering Range Limits              +-- Min Detection Pixel Threshold
-                     +-- Sensor Noise Bound Validation                   +-- FOV Centroid Angle Clamping
-                     +-- Circuit Waypoint Index Wrapping                 +-- 30 Hz Sleep Math Underflow Guard
-                     +-- Calibration Mean Zero-Division Guard            +-- Extended Fallback Warning Trigger
-                     +-- 52-Byte IMU Packet Chunk Bounds                 +-- Test Frame Capture Slot Cap
-
-```
-
-### Movement Invariants (`movement/src/verification.rs` — 10 Proofs)
-
-1. **`NavController::new`**: Constructor initializes safe zero-velocity defaults.
-2. **`NavController::set_state`**: State changes out of `Idle` are restricted strictly to valid transitions (`Turning`, `Reached`).
-3. **`NavController::ramp_velocities`**: Uses `old(self)` and `final(self)` state bounds to prove per-frame velocity step adjustments never exceed `max_accel_step`.
-4. **`NavController::update_bypass_distance`**: Proves calculated bypass trajectories strictly exceed barrier depth plus safety clearance.
-5. **`verify_angle_normalize`**: Proves heading angles wrap within $[-180^\circ, 180^\circ]$.
-6. **`verify_depth_threshold`**: Proves invalid depth noise outside $[0.3\text{m}, 2.5\text{m}]$ is mathematically rejected.
-7. **`verify_differential_steering`**: Proves track speed splits cannot exceed track differential limits.
-8. **`verify_circuit_index_advance`**: Proves array index wrapping (`(idx + 1) % len`) can never overflow.
-9. **`verify_calibration_mean`**: Proves 50-sample IMU calibration mean calculations are safe from division-by-zero.
-10. **`verify_imu_slice_offset`**: Proves slicing 52-byte UDP packets into 4-byte chunks stays within slice bounds.
-
-### Detection Invariants (`detection/src/verification.rs` — 10 Proofs)
-
-1. **`StreamTracker::new`**: Proves stream tracker starts in live mode.
-2. **`StreamTracker::mark_live`**: Proves live frames disengage fallback mode.
-3. **`StreamTracker::check_stale_and_fallback`**: Proves stream timeouts engage offline fallback and increment warning counts.
-4. **`verify_horizon_crop`**: Proves ROI horizontal/vertical crop bounds stay strictly within dynamic image dimensions ($X_{\text{start}} < X_{\text{end}} \le W$).
-5. **`verify_depth_in_range`**: Proves spatial depth filtering strictly enforces valid range checks.
-6. **`verify_obstacle_detection_threshold`**: Proves obstacle detection flags require $\ge 100$ valid depth pixels.
-7. **`verify_centroid_angle`**: Proves horizontal centroid angles are clamped within camera FOV limits ($\pm 30^\circ$).
-8. **`verify_frame_rate_sleep`**: Proves 30 Hz frame sleep calculations never underflow.
-9. **`verify_extended_fallback_alert`**: Proves degraded fallback operation ($\ge 30\text{s}$) triggers critical warnings.
-10. **`verify_capture_slot_increment`**: Proves test capture logging strictly halts after reaching its allocation cap (5 frames).

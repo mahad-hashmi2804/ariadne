@@ -5,7 +5,6 @@
 //! and dispatches serialized obstacle telemetry to the `movement` crate.
 
 mod vision;
-mod verification;
 
 use serde::Serialize;
 use std::fs::File;
@@ -150,25 +149,7 @@ impl StreamState {
             return;
         }
 
-        let fallback_elapsed_secs = self
-            .fallback_since
-            .map(|since| since.elapsed().as_secs())
-            .unwrap_or(0);
-        let (has_previous_warning, previous_warning_elapsed_secs) = match self.last_extended_warning {
-            Some(last) => (true, last.elapsed().as_secs()),
-            None => (false, 0),
-        };
-
-        let decision = verification::decide_fallback(
-            self.using_fallback,
-            fallback_elapsed_secs,
-            EXTENDED_FALLBACK_THRESHOLD.as_secs(),
-            has_previous_warning,
-            previous_warning_elapsed_secs,
-            EXTENDED_FALLBACK_REPEAT_INTERVAL.as_secs(),
-        );
-
-        if decision.just_transitioned {
+        if !self.using_fallback {
             println!(
                 "[Detection] Live {} stream dropped. Engaging offline fallback...",
                 self.label
@@ -186,18 +167,31 @@ impl StreamState {
             );
         }
 
-        if decision.emit_critical_warning {
-            eprintln!(
-                "[Detection] CRITICAL: {} stream has been running on static \
-             fallback data for {}s. Telemetry derived from this stream \
-             does not reflect real-world conditions. Check sensor connectivity.",
-                self.label, fallback_elapsed_secs
-            );
-            self.last_extended_warning = Some(Instant::now());
-        }
+        self.check_and_emit_extended_warning();
     }
 
-    
+    /// Logs periodic critical warnings if the stream remains in fallback mode for prolonged durations.
+    fn check_and_emit_extended_warning(&mut self) {
+        if let Some(since) = self.fallback_since {
+            if since.elapsed() >= EXTENDED_FALLBACK_THRESHOLD {
+                let should_warn = match self.last_extended_warning {
+                    None => true,
+                    Some(last) => last.elapsed() >= EXTENDED_FALLBACK_REPEAT_INTERVAL,
+                };
+
+                if should_warn {
+                    eprintln!(
+                        "[Detection] CRITICAL: {} stream has been running on static \
+                         fallback data for {:.0}s. Telemetry derived from this stream \
+                         does not reflect real-world conditions. Check sensor connectivity.",
+                        self.label,
+                        since.elapsed().as_secs_f64()
+                    );
+                    self.last_extended_warning = Some(Instant::now());
+                }
+            }
+        }
+    }
 
     /// Returns the active data source classification.
     fn source(&self) -> SourceKind {

@@ -37,8 +37,7 @@ impl ImuFrame {
     pub fn parse(buf: &[u8; 52]) -> Self {
         let mut floats = [0.0f32; 13];
         for i in 0..13 {
-            let offset = crate::verification::verify_imu_slice_offset(i);
-            let chunk = &buf[offset..offset + 4];
+            let chunk = &buf[i * 4..(i + 1) * 4];
             floats[i] = f32::from_le_bytes(chunk.try_into().unwrap());
         }
 

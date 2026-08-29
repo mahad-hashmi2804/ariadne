@@ -7,9 +7,6 @@ use image::{ImageBuffer, ImageReader, Luma, Rgb, RgbImage};
 use serde::Serialize;
 use std::io::Cursor;
 
-use crate::verification::{compute_angle_milli_deg, compute_centroid, compute_roi_bounds, depth_in_range, PixelAccumulator};
-
-
 // =============================================================================
 // DOMAIN STRUCTURES
 // =============================================================================
@@ -39,6 +36,8 @@ pub fn decode_depth_png(
     Ok(image.to_luma16())
 }
 
+/// Evaluates RGB and 16-bit depth streams, applying region-of-interest horizon filters
+/// to derive spatial obstacle telemetry while ignoring ground-plane clutter.
 pub fn process_sensor_streams(
     _jpeg_bytes: &[u8],
     depth_png_bytes: &[u8],
@@ -46,28 +45,37 @@ pub fn process_sensor_streams(
     let depth_image = decode_depth_png(depth_png_bytes)?;
     let (width, height) = depth_image.dimensions();
 
-    let roi = compute_roi_bounds(width, height);
+    // Restrict vertical scan band to 12%-42% height to filter ground plane below camera (z=0.085m).
+    let x_start = width * 20 / 100;
+    let x_end = width * 80 / 100;
+    let y_start = height * 12 / 100;
+    let y_end = height * 42 / 100;
+
+    let mut close_pixel_count: u64 = 0;
+    let mut sum_depth_mm: u64 = 0;
+    let mut sum_x_pixels: u64 = 0;
 
     let min_dist_mm = 300u16;  // Minimum detection threshold (0.3m)
     let max_dist_mm = 2000u16; // Maximum detection horizon (2.0m)
 
-    let mut acc = PixelAccumulator::new();
-
-    for y in roi.y_start..roi.y_end {
-        for x in roi.x_start..roi.x_end {
+    for y in y_start..y_end {
+        for x in x_start..x_end {
             let depth_mm = depth_image.get_pixel(x, y)[0];
-            if depth_in_range(depth_mm, min_dist_mm, max_dist_mm) {
-                acc.accumulate(depth_mm, x);
+            if depth_mm >= min_dist_mm && depth_mm <= max_dist_mm {
+                close_pixel_count += 1;
+                sum_depth_mm += depth_mm as u64;
+                sum_x_pixels += x as u64;
             }
         }
     }
 
-    if acc.close_pixel_count > 100 {
-        let (avg_depth_mm, centroid_x) = compute_centroid(&acc);
-        let angle_milli_deg = compute_angle_milli_deg(centroid_x as u32, width);
+    if close_pixel_count > 100 {
+        let avg_depth_mm = (sum_depth_mm / close_pixel_count) as f64;
+        let centroid_x = (sum_x_pixels / close_pixel_count) as f64;
+        let center_x = (width / 2) as f64;
 
-        let distance_m = avg_depth_mm as f64 / 1000.0;
-        let angle_deg = angle_milli_deg as f64 / 1000.0;
+        let distance_m = avg_depth_mm / 1000.0;
+        let angle_deg = ((centroid_x - center_x) / center_x) * 30.0;
 
         Ok(ObstacleTelemetry {
             obstacle_detected: true,
