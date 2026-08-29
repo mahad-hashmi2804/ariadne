@@ -1,14 +1,21 @@
 <mujoco model="invertible_tracked_robot">
+    <compiler angle="degree"/>
+
+    <!-- Soft, balanced ambient light -->
+    <visual>
+        <headlight diffuse="0.4 0.4 0.4" ambient="0.5 0.5 0.5" specular="0.1 0.1 0.1"/>
+    </visual>
+
     <default>
         <geom rgba="0.2 0.2 0.25 1" friction="1.5 0.3 0.1" solref="0.02 1" solimp="0.9 0.95 0.001"/>
-        <!-- Increased damping to absorb high-speed rotational momentum -->
         <joint type="hinge" damping="1.5" armature="0.10"/>
-        <!-- Tuned gain kv=40 for quick speed response; capped torque range to prevent pitch-up -->
         <velocity kv="40" forcerange="-160 160"/>
     </default>
 
     <worldbody>
-        <!-- Raised chassis Z-position to 0.085 to match new wheel radius -->
+        <!-- Directional light without duplicate name attribute -->
+        <light pos="1 1 4" dir="-0.2 -0.2 -1" diffuse="0.6 0.6 0.6" specular="0.2 0.2 0.2" castshadow="true"/>
+
         <body name="torso" pos="0 0 0.085">
             <freejoint name="root"/>
 
@@ -16,41 +23,79 @@
             <camera name="front_cam" pos="0.22 0 0.0" xyaxes="0 -1 0 0 0 1"/>
             <site name="imu_site" pos="0 0 0"/>
 
-            <!-- Central Chassis Box -->
-            <geom name="chassis" type="box" size="0.22 0.12 0.035" rgba="1 0 0 1" mass="5.0" contype="0" conaffinity="0"/>
+            <!-- Camera Housing Visual Overlay -->
+            <geom type="box" size="0.015 0.035 0.015" pos="0.21 0 0" rgba="0.05 0.05 0.08 1" contype="0" conaffinity="0"/>
+            <geom type="cylinder" size="0.008 0.003" pos="0.225 0 0" euler="0 90 0" rgba="0.0 0.9 1.0 1" contype="0" conaffinity="0"/>
+
+            <!-- Central Chassis Box (Dark Titanium Alloy) -->
+            <geom name="chassis" type="box" size="0.22 0.12 0.035" rgba="0.12 0.14 0.18 1" mass="5.0" contype="0" conaffinity="0"/>
+
+            <!-- Aesthetic Chassis Detailing (High-contrast Racing Stripe & Armor Panel) -->
+            <geom type="box" size="0.20 0.115 0.002" pos="0 0 0.036" rgba="0.05 0.05 0.08 1" contype="0" conaffinity="0"/>
+            <geom type="box" size="0.18 0.07 0.003" pos="0 0 0.038" rgba="1.0 0.3 0.0 1" contype="0" conaffinity="0"/>
+            <geom type="box" size="0.20 0.115 0.002" pos="0 0 -0.036" rgba="0.05 0.05 0.08 1" contype="0" conaffinity="0"/>
+            <geom type="box" size="0.18 0.07 0.003" pos="0 0 -0.038" rgba="1.0 0.3 0.0 1" contype="0" conaffinity="0"/>
+
+            <!-- Structural Crossbars (Silver Steel) -->
+            <geom type="cylinder" size="0.008 0.12" pos="0.10 0 0" euler="90 0 0" rgba="0.85 0.88 0.92 1" contype="0" conaffinity="0"/>
+            <geom type="cylinder" size="0.008 0.12" pos="-0.10 0 0" euler="90 0 0" rgba="0.85 0.88 0.92 1" contype="0" conaffinity="0"/>
+
+            <!-- Glowing Cyan LED Lights -->
+            <geom type="sphere" size="0.008" pos="0.21 0.09 0.03" rgba="0.0 1.0 0.8 1" contype="0" conaffinity="0"/>
+            <geom type="sphere" size="0.008" pos="0.21 -0.09 0.03" rgba="0.0 1.0 0.8 1" contype="0" conaffinity="0"/>
 
             <!-- LEFT TRACK MODULE (+Y) -->
-            <geom name="left_side_plate" type="box" size="0.21 0.005 0.055" pos="0 0.21 0" rgba="0.6 0.6 0.65 1" mass="0.4" contype="0" conaffinity="0"/>
-            <geom name="left_inner_plate" type="box" size="0.21 0.005 0.055" pos="0 0.15 0" rgba="0.5 0.5 0.55 1" mass="0.4" contype="0" conaffinity="0"/>
-            <geom name="left_tread_top" type="box" size="0.18 0.032 0.004" pos="0 0.18 0.083" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
-            <geom name="left_tread_bottom" type="box" size="0.18 0.032 0.004" pos="0 0.18 -0.083" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
-            <geom name="left_tread_front" type="cylinder" size="0.085 0.032" pos="0.16 0.18 0" euler="90 0 0" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
-            <geom name="left_tread_rear" type="cylinder" size="0.085 0.032" pos="-0.16 0.18 0" euler="90 0 0" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
+            <geom name="left_side_plate" type="box" size="0.21 0.005 0.055" pos="0 0.21 0" rgba="0.9 0.9 0.92 1" mass="0.4" contype="0" conaffinity="0"/>
+            <geom name="left_inner_plate" type="box" size="0.21 0.005 0.055" pos="0 0.15 0" rgba="0.2 0.22 0.25 1" mass="0.4" contype="0" conaffinity="0"/>
+            <geom name="left_tread_top" type="box" size="0.18 0.032 0.004" pos="0 0.18 0.083" rgba="0.08 0.08 0.08 1" contype="0" conaffinity="0"/>
+            <geom name="left_tread_bottom" type="box" size="0.18 0.032 0.004" pos="0 0.18 -0.083" rgba="0.08 0.08 0.08 1" contype="0" conaffinity="0"/>
+            <geom name="left_tread_front" type="cylinder" size="0.085 0.032" pos="0.16 0.18 0" euler="90 0 0" rgba="0.08 0.08 0.08 1" contype="0" conaffinity="0"/>
+            <geom name="left_tread_rear" type="cylinder" size="0.085 0.032" pos="-0.16 0.18 0" euler="90 0 0" rgba="0.08 0.08 0.08 1" contype="0" conaffinity="0"/>
+
+            <!-- Left Side Trim -->
+            <geom type="box" size="0.20 0.002 0.010" pos="0 0.216 0" rgba="1.0 0.3 0.0 1" contype="0" conaffinity="0"/>
 
             <body name="left_front_wheel" pos="0.16 0.18 0">
                 <joint name="left_front_joint" axis="0 1 0"/>
-                <geom type="cylinder" size="0.085" fromto="0 -0.015 0  0 0.015 0" rgba="0.25 0.25 0.3 1" mass="0.8"/>
+                <geom type="cylinder" size="0.085" fromto="0 -0.015 0  0 0.015 0" rgba="0.15 0.16 0.18 1" mass="0.8"/>
+                <!-- Outer Wheel Hub Cap -->
+                <geom type="cylinder" size="0.06 0.016" euler="90 0 0" rgba="0.9 0.9 0.92 1" contype="0" conaffinity="0"/>
+                <geom type="cylinder" size="0.025 0.017" euler="90 0 0" rgba="1.0 0.3 0.0 1" contype="0" conaffinity="0"/>
             </body>
+
             <body name="left_rear_wheel" pos="-0.16 0.18 0">
                 <joint name="left_rear_joint" axis="0 1 0"/>
-                <geom type="cylinder" size="0.085" fromto="0 -0.015 0  0 0.015 0" rgba="0.25 0.25 0.3 1" mass="0.8"/>
+                <geom type="cylinder" size="0.085" fromto="0 -0.015 0  0 0.015 0" rgba="0.15 0.16 0.18 1" mass="0.8"/>
+                <!-- Outer Wheel Hub Cap -->
+                <geom type="cylinder" size="0.06 0.016" euler="90 0 0" rgba="0.9 0.9 0.92 1" contype="0" conaffinity="0"/>
+                <geom type="cylinder" size="0.025 0.017" euler="90 0 0" rgba="1.0 0.3 0.0 1" contype="0" conaffinity="0"/>
             </body>
 
             <!-- RIGHT TRACK MODULE (-Y) -->
-            <geom name="right_side_plate" type="box" size="0.21 0.005 0.055" pos="0 -0.21 0" rgba="0.6 0.6 0.65 1" mass="0.4" contype="0" conaffinity="0"/>
-            <geom name="right_inner_plate" type="box" size="0.21 0.005 0.055" pos="0 -0.15 0" rgba="0.5 0.5 0.55 1" mass="0.4" contype="0" conaffinity="0"/>
-            <geom name="right_tread_top" type="box" size="0.18 0.032 0.004" pos="0 -0.18 0.083" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
-            <geom name="right_tread_bottom" type="box" size="0.18 0.032 0.004" pos="0 -0.18 -0.083" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
-            <geom name="right_tread_front" type="cylinder" size="0.085 0.032" pos="0.16 -0.18 0" euler="90 0 0" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
-            <geom name="right_tread_rear" type="cylinder" size="0.085 0.032" pos="-0.16 -0.18 0" euler="90 0 0" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
+            <geom name="right_side_plate" type="box" size="0.21 0.005 0.055" pos="0 -0.21 0" rgba="0.9 0.9 0.92 1" mass="0.4" contype="0" conaffinity="0"/>
+            <geom name="right_inner_plate" type="box" size="0.21 0.005 0.055" pos="0 -0.15 0" rgba="0.2 0.22 0.25 1" mass="0.4" contype="0" conaffinity="0"/>
+            <geom name="right_tread_top" type="box" size="0.18 0.032 0.004" pos="0 -0.18 0.083" rgba="0.08 0.08 0.08 1" contype="0" conaffinity="0"/>
+            <geom name="right_tread_bottom" type="box" size="0.18 0.032 0.004" pos="0 -0.18 -0.083" rgba="0.08 0.08 0.08 1" contype="0" conaffinity="0"/>
+            <geom name="right_tread_front" type="cylinder" size="0.085 0.032" pos="0.16 -0.18 0" euler="90 0 0" rgba="0.08 0.08 0.08 1" contype="0" conaffinity="0"/>
+            <geom name="right_tread_rear" type="cylinder" size="0.085 0.032" pos="-0.16 -0.18 0" euler="90 0 0" rgba="0.08 0.08 0.08 1" contype="0" conaffinity="0"/>
+
+            <!-- Right Side Trim -->
+            <geom type="box" size="0.20 0.002 0.010" pos="0 -0.216 0" rgba="1.0 0.3 0.0 1" contype="0" conaffinity="0"/>
 
             <body name="right_front_wheel" pos="0.16 -0.18 0">
                 <joint name="right_front_joint" axis="0 1 0"/>
-                <geom type="cylinder" size="0.085" fromto="0 -0.015 0  0 0.015 0" rgba="0.25 0.25 0.3 1" mass="0.8"/>
+                <geom type="cylinder" size="0.085" fromto="0 -0.015 0  0 0.015 0" rgba="0.15 0.16 0.18 1" mass="0.8"/>
+                <!-- Outer Wheel Hub Cap -->
+                <geom type="cylinder" size="0.06 0.016" euler="90 0 0" rgba="0.9 0.9 0.92 1" contype="0" conaffinity="0"/>
+                <geom type="cylinder" size="0.025 0.017" euler="90 0 0" rgba="1.0 0.3 0.0 1" contype="0" conaffinity="0"/>
             </body>
+
             <body name="right_rear_wheel" pos="-0.16 -0.18 0">
                 <joint name="right_rear_joint" axis="0 1 0"/>
-                <geom type="cylinder" size="0.085" fromto="0 -0.015 0  0 0.015 0" rgba="0.25 0.25 0.3 1" mass="0.8"/>
+                <geom type="cylinder" size="0.085" fromto="0 -0.015 0  0 0.015 0" rgba="0.15 0.16 0.18 1" mass="0.8"/>
+                <!-- Outer Wheel Hub Cap -->
+                <geom type="cylinder" size="0.06 0.016" euler="90 0 0" rgba="0.9 0.9 0.92 1" contype="0" conaffinity="0"/>
+                <geom type="cylinder" size="0.025 0.017" euler="90 0 0" rgba="1.0 0.3 0.0 1" contype="0" conaffinity="0"/>
             </body>
         </body>
     </worldbody>
