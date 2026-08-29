@@ -1,6 +1,6 @@
 //! # Movement Formal Verification Module (Verus SMT Specifications)
 //!
-//! Contains 19 SMT-backed formal specifications verified via Verus and Z3 solver,
+//! Contains 18 SMT-backed formal specifications verified via Verus and Z3 solver,
 //! proving state transitions, acceleration ramping bounds, angle wrapping, and memory safety.
 
 use vstd::prelude::*;

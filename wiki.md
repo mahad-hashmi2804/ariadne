@@ -177,11 +177,11 @@ City plaza scene containing paved avenues, crosswalks, elevated sidewalk curbs (
 
 ## 6. Formal Verification Suite (Verus / Z3 SMT)
 
-Ariadne contains **20 SMT-backed formal proofs** across two dedicated `verification.rs` modules, mathematically guaranteeing that safety-critical logic contains zero arithmetic overflows, buffer panics, or illegal state transitions.
+Ariadne contains **25 SMT-backed formal proofs** across two crate-level `verification.rs` modules, mathematically guaranteeing that core navigation and vision algorithms operate with zero arithmetic overflows, buffer panics, division-by-zero errors, or illegal state transitions.
 
 ```
                    +-------------------------------------------------------+
-                   |     Ariadne Formal Verification Suite (20/20)         |
+                   |     Ariadne Formal Verification Suite (25/25)         |
                    +---------------------------+---------------------------+
                                                |
                      +-------------------------+-------------------------+
@@ -189,44 +189,81 @@ Ariadne contains **20 SMT-backed formal proofs** across two dedicated `verificat
                      v                                                   v
       +------------------------------+                    +------------------------------+
       |      Movement Invariants     |                    |     Detection Invariants     |
-      |          (10 Proofs)         |                    |          (10 Proofs)         |
+      |          (18 Proofs)         |                    |          (7 Proofs)          |
       +--------------+---------------+                    +--------------+---------------+
                      |                                                   |
-                     +-- NavController Constructor Invariants            +-- StreamTracker Lifecycle States
-                     +-- Restricted State Transitions                    +-- Live Frame Fallback Recovery
-                     +-- Velocity Acceleration Ramping Bounds            +-- Timeout Fallback Engagement
-                     +-- Obstacle Geometry Clearance Overshoot           +-- Horizon ROI Crop Boundary Check
-                     +-- Heading Angle Normalization Modulo              +-- Spatial Depth Range Filtering
-                     +-- Differential Steering Range Limits              +-- Min Detection Pixel Threshold
-                     +-- Sensor Noise Bound Validation                   +-- FOV Centroid Angle Clamping
-                     +-- Circuit Waypoint Index Wrapping                 +-- 30 Hz Sleep Math Underflow Guard
-                     +-- Calibration Mean Zero-Division Guard            +-- Extended Fallback Warning Trigger
-                     +-- 52-Byte IMU Packet Chunk Bounds                 +-- Test Frame Capture Slot Cap
-
+                     +-- NavController Constructor State                 +-- Ground-Plane ROI Image Bounds
+                     +-- Idle State Machine Guards                       +-- Sensor Range Bounds Validation
+                     +-- Frame Velocity Step Bounds                      +-- Accumulator Zero Initialization
+                     +-- Bypass Trajectory Overshoot                     +-- Inductive Loop Accumulate Bounds
+                     +-- Heading Modulo Wrap [-180, 180]                 +-- Zero-Division Centroid Protection
+                     +-- Depth Sensor Noise Rejection                    +-- FOV Angle Clamping [-30°, +30°]
+                     +-- Track Differential Clamping                     +-- Fallback & Alert Lifecycle
+                     +-- Waypoint Circuit Index Wrap
+                     +-- 52-Byte IMU Chunk Slicing
+                     +-- Executable Velocity Ramp Bounds
+                     +-- Bypass Clearance Overshoot
+                     +-- Avoidance Pivot Delta Clamping
+                     +-- Hemisphere Pivot Selection
+                     +-- Promille Turn Speed Scale
+                     +-- 64-Bit Squared Distance Check
+                     +-- Calibration Sample Step State
+                     +-- 16-Byte Motor Packet Offset
+                     +-- Fixed-Point Gyro Mean Safety
 ```
 
-### Movement Invariants (`movement/src/verification.rs` — 10 Proofs)
+### Movement Invariants (`movement/src/verification.rs` — 18 Proofs)
 
-1. **`NavController::new`**: Constructor initializes safe zero-velocity defaults.
-2. **`NavController::set_state`**: State changes out of `Idle` are restricted strictly to valid transitions (`Turning`, `Reached`).
-3. **`NavController::ramp_velocities`**: Uses `old(self)` and `final(self)` state bounds to prove per-frame velocity step adjustments never exceed `max_accel_step`.
-4. **`NavController::update_bypass_distance`**: Proves calculated bypass trajectories strictly exceed barrier depth plus safety clearance.
-5. **`verify_angle_normalize`**: Proves heading angles wrap within $[-180^\circ, 180^\circ]$.
-6. **`verify_depth_threshold`**: Proves invalid depth noise outside $[0.3\text{m}, 2.5\text{m}]$ is mathematically rejected.
-7. **`verify_differential_steering`**: Proves track speed splits cannot exceed track differential limits.
-8. **`verify_circuit_index_advance`**: Proves array index wrapping (`(idx + 1) % len`) can never overflow.
-9. **`verify_calibration_mean`**: Proves 50-sample IMU calibration mean calculations are safe from division-by-zero.
-10. **`verify_imu_slice_offset`**: Proves slicing 52-byte UDP packets into 4-byte chunks stays within slice bounds.
+**Part 1: Stateful Controller Model**
 
-### Detection Invariants (`detection/src/verification.rs` — 10 Proofs)
+1. **`NavController::new`**: Formally proves the constructor initializes safe zero-velocity defaults and idle state.
+2. **`NavController::set_state`**: Proves state transitions out of `Idle` are strictly restricted to valid target states (`Turning`, `Reached`).
+3. **`NavController::ramp_velocities`**: Uses `old(self)` and `final(self)` state bounds to prove per-frame velocity mutations never exceed `max_accel_step`.
+4. **`NavController::update_bypass_distance`**: Proves calculated bypass trajectories strictly overshoot obstacle depth plus the required safety buffer.
+   **Part 2: Domain Verification Helpers**
+5. **`verify_angle_normalize`**: Proves raw heading angle differences map strictly within [−180∘,180∘] modulo 360∘.
+6. **`verify_depth_threshold`**: Proves raw sensor depth values outside valid operational thresholds are mathematically rejected.
+7. **`verify_differential_steering`**: Proves differential track speed splits never exceed mechanical steering thresholds.
+8. **`verify_circuit_index_advance`**: Proves waypoint array indexing (`(idx + 1) % len`) cannot exceed circuit array bounds.
+9. **`verify_imu_slice_offset`**: Proves slicing 52-byte UDP telemetry datagrams into 4-byte chunks stays strictly within buffer bounds.
 
-1. **`StreamTracker::new`**: Proves stream tracker starts in live mode.
-2. **`StreamTracker::mark_live`**: Proves live frames disengage fallback mode.
-3. **`StreamTracker::check_stale_and_fallback`**: Proves stream timeouts engage offline fallback and increment warning counts.
-4. **`verify_horizon_crop`**: Proves ROI horizontal/vertical crop bounds stay strictly within dynamic image dimensions ($X_{\text{start}} < X_{\text{end}} \le W$).
-5. **`verify_depth_in_range`**: Proves spatial depth filtering strictly enforces valid range checks.
-6. **`verify_obstacle_detection_threshold`**: Proves obstacle detection flags require $\ge 100$ valid depth pixels.
-7. **`verify_centroid_angle`**: Proves horizontal centroid angles are clamped within camera FOV limits ($\pm 30^\circ$).
-8. **`verify_frame_rate_sleep`**: Proves 30 Hz frame sleep calculations never underflow.
-9. **`verify_extended_fallback_alert`**: Proves degraded fallback operation ($\ge 30\text{s}$) triggers critical warnings.
-10. **`verify_capture_slot_increment`**: Proves test capture logging strictly halts after reaching its allocation cap (5 frames).
+**Part 3: Executable Runtime Invariants**
+10. **`verify_accel_ramp`**: Proves velocity step changes remain within acceleration bounds while enforcing the [−10000,10000] operating envelope.
+11. **`verify_bypass_distance`**: Proves bypass path clearance strictly exceeds barrier depth.
+12. **`verify_turn_delta`**: Proves turned-angle reduction math (`360 - turned_deg`) always lands within [0∘,180∘].
+13. **`verify_avoid_turn_direction`**: Proves obstacle pivot direction choices strictly turn away from the detected obstacle hemisphere.
+14. **`verify_turn_speed_interpolation`**: Proves turn-speed promille scaling stays bounded within [min_speed,max_speed].
+15. **`verify_arrival_distance_sq`**: Proves squared Euclidean distance checks prevent floating-point `sqrt` operations and avoid 32-bit overflow via 64-bit promotion.
+16. **`verify_calibration_step`**: Proves calibration sample counting advances deterministically to completion.
+17. **`verify_motor_buffer_offsets`**: Proves writing 64-bit track velocities to a 16-byte UDP packet buffer contains zero slice overlap.
+18. **`verify_calibration_mean`**: Proves fixed-point gyro bias mean calculations across arbitrary sample counts are protected against division-by-zero panics.
+
+### Detection Invariants (`detection/src/verification.rs` — 7 Proofs)
+
+1. **`compute_roi_bounds`**: Formally proves that constant-divisor scan-band arithmetic (20%→80% X, 12%→42% Y) stays strictly within u32 image dimensions without buffer panics.
+2. **`depth_in_range`**: Proves raw pixel depth filtering strictly enforces bounds between `min_dist_mm` and `max_dist_mm`.
+3. **`PixelAccumulator::new`**: Proves fresh pixel accumulation structs initialize depth, X-coordinate, and pixel counts at zero.
+4. **`PixelAccumulator::accumulate`**: Inductively proves that adding valid depth pixels to running totals cannot overflow `u64` storage across loops up to 109 pixels.
+5. **`compute_centroid`**: Proves spatial centroid depth and X-coordinate averaging cannot trigger division-by-zero panics given minimum-pixel gates.
+6. **`compute_angle_milli_deg`**: Proves centroid horizontal bearing angles (milli-degrees) are clamped to the physical camera field of view (±30000 mdeg).
+7. **`decide_fallback`**: Proves critical extended-fallback alerts fire if and only if a stream has been degraded for ≥30s and repeat intervals (≥10s) are satisfied.
+
+### Unified Execution Architecture
+
+Ariadne links `vstd` directly into the project runtime. The functions in Part 3 of `movement` and Parts 1–4 of `detection` are **`exec fn` blocks**, serving as the single source of truth for both SMT theorem proving and production binaries.
+
+```
++-------------------------------------------------------------------------+
+|                       Unified Verus / Rust AST                          |
++------------------------------------+------------------------------------+
+                                     |
+              +----------------------+----------------------+
+              |                                             |
+              v                                             v
+  [verus.exe Verification]                      [cargo build Binary]
+  • Evaluates contracts & lemmas               • Compiles `exec fn` blocks
+  • Z3 proves postconditions                   • Direct execution on hardware
+  • Rejects unsafe math                        • Zero spec/code divergence
+```
+
+---
