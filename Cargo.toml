@@ -11,5 +11,4 @@ mujoco-rs = { version = "5.0", features = ["auto-download-mujoco"] }
 nalgebra = "0.33"
 serde = "1.0.229"
 serde_json = "1.0.151"
-opencv-rs = "0.1.2"
 image = "0.25.10"
