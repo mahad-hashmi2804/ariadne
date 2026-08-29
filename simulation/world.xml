@@ -1,15 +1,845 @@
-<mujoco model="full_world">
+<mujoco model="ariadne_post_earthquake">
+
     <option timestep="0.002" gravity="0 0 -9.81"/>
 
-    <worldbody>
-        <light pos="0 0 3" dir="0 0 -1"/>
-        <geom name="floor" type="plane" size="10 10 0.1" rgba="0.9 0.9 0.9 1" friction="3.0 0.5 0.5"/>
+    <asset>
 
-        <!-- Obstacles for Detection team to locate -->
-        <geom name="obstacle_block" type="box" size="0.1 0.1 0.1" pos="1.5 0 0.1" rgba="0.9 0.2 0.2 1"/>
-        <geom name="ramp" type="box" size="0.5 0.3 0.05" pos="3.0 0 0.05" rgba="0.2 0.7 0.3 1"/>
+        <material name="brown_ground"
+                  rgba="0.36 0.23 0.14 1"/>
+
+        <material name="road"
+                  rgba="0.07 0.08 0.09 1"/>
+
+        <material name="road_damage"
+                  rgba="0.22 0.20 0.18 1"/>
+
+        <material name="concrete"
+                  rgba="0.55 0.53 0.49 1"/>
+
+        <material name="dark_concrete"
+                  rgba="0.32 0.31 0.29 1"/>
+
+        <material name="brick"
+                  rgba="0.65 0.25 0.12 1"/>
+
+        <material name="wood"
+                  rgba="0.30 0.14 0.05 1"/>
+
+        <material name="metal"
+                  rgba="0.20 0.22 0.24 1"/>
+
+        <material name="glass"
+                  rgba="0.20 0.65 0.85 0.75"/>
+
+    </asset>
+
+
+    <!-- ================= VISUAL SETTINGS ================= -->
+
+    <visual>
+
+        <headlight
+            ambient="0.45 0.45 0.45"
+            diffuse="0.75 0.75 0.75"
+            specular="0.25 0.25 0.25"/>
+
+        <map
+            znear="0.01"
+            zfar="100"/>
+
+        <global
+            offwidth="1280"
+            offheight="720"/>
+
+    </visual>
+
+
+    <worldbody>
+
+
+        <!-- ================= LIGHTING ================= -->
+
+        <light name="sun"
+               directional="true"
+               pos="10 -15 25"
+               dir="-0.35 0.45 -1"
+               diffuse="1 0.95 0.85"
+               specular="0.35 0.35 0.35"/>
+
+        <light name="fill_light"
+               directional="true"
+               pos="-15 10 15"
+               dir="0.45 -0.30 -1"
+               diffuse="0.45 0.48 0.55"
+               specular="0.15 0.15 0.15"/>
+
+
+        <!-- ================= OVERVIEW CAMERA ================= -->
+
+        <camera name="overview_cam"
+                pos="10 -14 11"
+                euler="55 0 35"
+                fovy="55"/>
+
+
+        <!-- ================= GROUND ================= -->
+
+        <geom name="ground"
+              type="plane"
+              size="22 22 0.1"
+              pos="0 0 0"
+              material="brown_ground"
+              friction="1.5 0.4 0.1"/>
+
+
+        <!-- ================= MAIN ROADS ================= -->
+
+        <geom name="main_road_NS"
+              type="box"
+              pos="0 0 0.035"
+              size="2.8 22 0.035"
+              material="road"/>
+
+        <geom name="main_road_EW"
+              type="box"
+              pos="0 0 0.04"
+              size="22 2.8 0.035"
+              material="road"/>
+
+
+        <!-- ================= SIDE ROADS ================= -->
+
+        <geom name="west_road"
+              type="box"
+              pos="-16 0 0.035"
+              size="2.0 15 0.035"
+              material="road"/>
+
+        <geom name="east_road"
+              type="box"
+              pos="16 0 0.035"
+              size="2.0 15 0.035"
+              material="road"/>
+
+
+        <!-- ================= ROAD DAMAGE ================= -->
+
+        <geom name="damage1"
+              type="box"
+              pos="-1.0 8.5 0.085"
+              size="1.1 0.16 0.035"
+              euler="0 0 0.25"
+              material="road_damage"/>
+
+        <geom name="damage2"
+              type="box"
+              pos="1.0 5 0.085"
+              size="0.8 0.13 0.035"
+              euler="0 0 -0.35"
+              material="road_damage"/>
+
+        <geom name="damage3"
+              type="box"
+              pos="-1.0 -6 0.085"
+              size="1.2 0.14 0.035"
+              euler="0 0 -0.25"
+              material="road_damage"/>
+
+        <geom name="damage4"
+              type="box"
+              pos="1.0 -10 0.085"
+              size="0.9 0.15 0.035"
+              euler="0 0 0.35"
+              material="road_damage"/>
+
+
+        <!-- ================= ROAD CRACKS ================= -->
+
+        <geom type="box"
+              pos="-1.2 14 0.075"
+              size="0.035 1.1 0.012"
+              euler="0 0 0.30"
+              rgba="0.01 0.01 0.01 1"/>
+
+        <geom type="box"
+              pos="-0.8 13.1 0.075"
+              size="0.035 0.8 0.012"
+              euler="0 0 -0.55"
+              rgba="0.01 0.01 0.01 1"/>
+
+        <geom type="box"
+              pos="1.2 8 0.075"
+              size="0.035 1.2 0.012"
+              euler="0 0 -0.25"
+              rgba="0.01 0.01 0.01 1"/>
+
+        <geom type="box"
+              pos="-1.0 -3 0.075"
+              size="0.035 1.3 0.012"
+              euler="0 0 0.45"
+              rgba="0.01 0.01 0.01 1"/>
+
+        <geom type="box"
+              pos="1.1 -10 0.075"
+              size="0.035 1.1 0.012"
+              euler="0 0 -0.40"
+              rgba="0.01 0.01 0.01 1"/>
+
+
+        <!-- ================= EMPTY BUILDING SPACES ================= -->
+
+        <geom name="building_space_1"
+              type="box"
+              pos="-10 10 0.03"
+              size="5.0 4.0 0.03"
+              material="brown_ground"
+              contype="0"
+              conaffinity="0"/>
+
+        <geom name="building_space_2"
+              type="box"
+              pos="10 10 0.03"
+              size="5.0 4.0 0.03"
+              material="brown_ground"
+              contype="0"
+              conaffinity="0"/>
+
+        <geom name="building_space_3"
+              type="box"
+              pos="-10 -10 0.03"
+              size="5.0 4.0 0.03"
+              material="brown_ground"
+              contype="0"
+              conaffinity="0"/>
+
+        <geom name="building_space_4"
+              type="box"
+              pos="10 -10 0.03"
+              size="5.0 4.0 0.03"
+              material="brown_ground"
+              contype="0"
+              conaffinity="0"/>
+
+
+        <!-- ================= NORTH-WEST RUBBLE ================= -->
+
+        <geom name="nw_concrete_1"
+              type="box"
+              pos="-7.0 7.0 0.22"
+              size="0.65 0.42 0.22"
+              euler="0.12 0.25 0.55"
+              material="concrete"/>
+
+        <geom name="nw_concrete_2"
+              type="box"
+              pos="-7.8 6.5 0.15"
+              size="0.35 0.28 0.15"
+              euler="-0.2 0.15 -0.4"
+              material="dark_concrete"/>
+
+        <geom name="nw_concrete_3"
+              type="box"
+              pos="-6.3 7.7 0.13"
+              size="0.30 0.22 0.13"
+              euler="0.2 0.1 0.7"
+              material="concrete"/>
+
+        <geom type="box"
+              pos="-7.4 6.9 0.10"
+              size="0.25 0.13 0.10"
+              euler="0.1 0.2 0.4"
+              material="brick"/>
+
+        <geom type="box"
+              pos="-6.8 6.3 0.08"
+              size="0.18 0.12 0.08"
+              euler="-0.2 0.1 -0.3"
+              material="brick"/>
+
+        <geom type="sphere"
+              size="0.12"
+              pos="-8.2 7.3 0.12"
+              material="dark_concrete"/>
+
+        <geom type="sphere"
+              size="0.09"
+              pos="-6.5 6.6 0.09"
+              material="concrete"/>
+
+
+        <!-- ================= NORTH-EAST RUBBLE ================= -->
+
+        <geom name="ne_concrete_1"
+              type="box"
+              pos="7.0 7.0 0.20"
+              size="0.60 0.35 0.20"
+              euler="0.18 -0.12 0.35"
+              material="concrete"/>
+
+        <geom name="ne_concrete_2"
+              type="box"
+              pos="7.8 6.5 0.14"
+              size="0.32 0.25 0.14"
+              euler="0.25 0.15 -0.7"
+              material="dark_concrete"/>
+
+        <geom type="box"
+              pos="7.2 7.8 0.11"
+              size="0.27 0.14 0.11"
+              euler="0.2 -0.1 0.5"
+              material="brick"/>
+
+        <geom type="box"
+              pos="6.6 6.4 0.09"
+              size="0.19 0.11 0.09"
+              euler="0.1 0.3 -0.6"
+              material="brick"/>
+
+        <geom type="sphere"
+              size="0.13"
+              pos="8.3 7.2 0.13"
+              material="dark_concrete"/>
+
+        <geom type="sphere"
+              size="0.10"
+              pos="6.5 7.5 0.10"
+              material="concrete"/>
+
+
+        <!-- ================= SOUTH-WEST RUBBLE ================= -->
+
+        <geom name="sw_concrete_1"
+              type="box"
+              pos="-7.0 -7.0 0.19"
+              size="0.55 0.38 0.19"
+              euler="-0.15 0.22 0.6"
+              material="concrete"/>
+
+        <geom name="sw_concrete_2"
+              type="box"
+              pos="-7.8 -6.4 0.13"
+              size="0.30 0.22 0.13"
+              euler="0.15 0.1 -0.5"
+              material="dark_concrete"/>
+
+        <geom type="box"
+              pos="-6.5 -7.7 0.10"
+              size="0.25 0.14 0.10"
+              euler="0.2 0.1 -0.5"
+              material="brick"/>
+
+        <geom type="box"
+              pos="-7.6 -7.3 0.08"
+              size="0.18 0.12 0.08"
+              euler="-0.1 0.2 0.7"
+              material="brick"/>
+
+        <geom type="sphere"
+              size="0.15"
+              pos="-8.2 -6.8 0.15"
+              material="dark_concrete"/>
+
+        <geom type="sphere"
+              size="0.10"
+              pos="-6.4 -6.5 0.10"
+              material="brick"/>
+
+
+        <!-- ================= SOUTH-EAST RUBBLE ================= -->
+
+        <geom name="se_concrete_1"
+              type="box"
+              pos="7.0 -7.0 0.21"
+              size="0.65 0.40 0.21"
+              euler="0.20 -0.18 -0.45"
+              material="dark_concrete"/>
+
+        <geom name="se_concrete_2"
+              type="box"
+              pos="7.8 -6.3 0.14"
+              size="0.32 0.25 0.14"
+              euler="-0.1 0.2 0.4"
+              material="concrete"/>
+
+        <geom type="box"
+              pos="6.5 -7.7 0.10"
+              size="0.24 0.13 0.10"
+              euler="0.15 -0.2 -0.4"
+              material="brick"/>
+
+        <geom type="sphere"
+              size="0.13"
+              pos="8.2 -6.8 0.13"
+              material="brick"/>
+
+        <geom type="sphere"
+              size="0.10"
+              pos="6.4 -6.5 0.10"
+              material="concrete"/>
+
+
+        <!-- ================= SMALL RUBBLE ================= -->
+
+        <geom type="sphere"
+              size="0.07"
+              pos="-5.4 5.5 0.07"
+              material="concrete"/>
+
+        <geom type="sphere"
+              size="0.08"
+              pos="-6.1 5.9 0.08"
+              material="brick"/>
+
+        <geom type="sphere"
+              size="0.06"
+              pos="-7.0 5.8 0.06"
+              material="dark_concrete"/>
+
+        <geom type="sphere"
+              size="0.08"
+              pos="5.4 5.7 0.08"
+              material="brick"/>
+
+        <geom type="sphere"
+              size="0.07"
+              pos="6.0 5.3 0.07"
+              material="concrete"/>
+
+        <geom type="sphere"
+              size="0.09"
+              pos="7.5 5.8 0.09"
+              material="dark_concrete"/>
+
+        <geom type="sphere"
+              size="0.08"
+              pos="-5.8 -5.5 0.08"
+              material="brick"/>
+
+        <geom type="sphere"
+              size="0.07"
+              pos="-7.0 -5.7 0.07"
+              material="concrete"/>
+
+        <geom type="sphere"
+              size="0.09"
+              pos="5.6 -5.5 0.09"
+              material="dark_concrete"/>
+
+        <geom type="sphere"
+              size="0.07"
+              pos="7.2 -5.7 0.07"
+              material="brick"/>
+
+
+        <!-- ================= FALLEN TREES ================= -->
+
+        <geom name="fallen_tree_1"
+              type="capsule"
+              fromto="-12 8 0.30 -8 6 0.30"
+              size="0.25"
+              material="wood"/>
+
+        <geom name="fallen_tree_2"
+              type="capsule"
+              fromto="8 8 0.28 12 6 0.28"
+              size="0.23"
+              material="wood"/>
+
+        <geom name="fallen_tree_3"
+              type="capsule"
+              fromto="-12 -8 0.28 -8 -6 0.28"
+              size="0.24"
+              material="wood"/>
+
+        <geom name="fallen_tree_4"
+              type="capsule"
+              fromto="8 -8 0.28 12 -9.5 0.28"
+              size="0.22"
+              material="wood"/>
+
+
+        <!-- ================= FALLEN POLES ================= -->
+
+        <geom name="fallen_pole_1"
+              type="capsule"
+              fromto="-11 3 0.14 -6 4.5 0.14"
+              size="0.075"
+              material="metal"/>
+
+        <geom name="fallen_pole_2"
+              type="capsule"
+              fromto="7 -4.5 0.14 11 -3 0.14"
+              size="0.075"
+              material="metal"/>
+
+        <geom name="fallen_pole_3"
+              type="capsule"
+              fromto="-10 -4 0.14 -7 -6 0.14"
+              size="0.065"
+              material="wood"/>
+
+
+        <!-- ================= BROKEN WIRES ================= -->
+
+        <geom type="capsule"
+              fromto="-12 4 0.10 -9 6 0.10"
+              size="0.025"
+              material="metal"/>
+
+        <geom type="capsule"
+              fromto="-9 6 0.10 -6 5 0.10"
+              size="0.025"
+              material="metal"/>
+
+        <geom type="capsule"
+              fromto="8 4 0.10 12 6 0.10"
+              size="0.025"
+              material="metal"/>
+
+
+        <!-- ================= DAMAGED CARS ================= -->
+
+        <geom name="car_north"
+              type="box"
+              pos="0 18 0.32"
+              size="1.20 0.58 0.27"
+              euler="0.05 0.10 0.12"
+              rgba="0.70 0.05 0.03 1"/>
+
+        <geom name="car_north_window"
+              type="box"
+              pos="0 18 0.66"
+              size="0.65 0.46 0.14"
+              euler="0.05 0.10 0.12"
+              rgba="0.18 0.55 0.70 0.75"/>
+
+        <geom name="car_south"
+              type="box"
+              pos="0 -18 0.32"
+              size="1.20 0.58 0.27"
+              euler="-0.05 0.08 -0.15"
+              rgba="0.03 0.18 0.65 1"/>
+
+        <geom name="car_south_window"
+              type="box"
+              pos="0 -18 0.66"
+              size="0.65 0.46 0.14"
+              euler="-0.05 0.08 -0.15"
+              rgba="0.18 0.55 0.70 0.75"/>
+
+
+        <!-- ================= BROKEN GLASS ================= -->
+
+        <geom type="box"
+              pos="-5 2 0.08"
+              size="0.32 0.025 0.015"
+              euler="0 0 0.7"
+              material="glass"/>
+
+        <geom type="box"
+              pos="5 -2 0.08"
+              size="0.28 0.025 0.015"
+              euler="0 0 -0.5"
+              material="glass"/>
+
+        <geom type="box"
+              pos="-4 -8 0.08"
+              size="0.35 0.025 0.015"
+              euler="0 0 0.3"
+              material="glass"/>
+
+
+        <!-- ================= ROAD OBSTACLES ================= -->
+
+        <geom type="box"
+              pos="-4 5 0.30"
+              size="0.75 0.22 0.28"
+              euler="0 0 0.25"
+              material="concrete"/>
+
+        <geom type="box"
+              pos="4 -6 0.27"
+              size="0.65 0.22 0.25"
+              euler="0 0 -0.30"
+              material="brick"/>
+
+        <geom type="box"
+              pos="-5 -3 0.25"
+              size="0.60 0.20 0.23"
+              euler="0 0 0.45"
+              material="concrete"/>
+
+
+        <!-- ================= START ================= -->
+
+        <geom name="start_area"
+              type="cylinder"
+              pos="0 -3.5 0.08"
+              size="0.85 0.025"
+              rgba="0.05 0.90 0.15 1"
+              contype="0"
+              conaffinity="0"/>
+
+
+        <!-- ================= FINISH ================= -->
+
+        <geom name="finish_area"
+              type="cylinder"
+              pos="0 18 0.08"
+              size="0.85 0.025"
+              rgba="0.95 0.08 0.04 1"
+              contype="0"
+              conaffinity="0"/>
+
+
+        <!-- ================= ROBOT ================= -->
+
+        <body name="torso"
+              pos="0 0 0.085">
+
+            <freejoint name="root"/>
+
+            <camera name="front_cam"
+                    pos="0.22 0 0"
+                    xyaxes="0 -1 0 0 0 1"/>
+
+            <site name="imu_site"
+                  pos="0 0 0"/>
+
+
+            <!-- CHASSIS -->
+
+            <geom name="chassis"
+                  type="box"
+                  size="0.22 0.12 0.035"
+                  rgba="1 0 0 1"
+                  mass="5.0"
+                  contype="0"
+                  conaffinity="0"/>
+
+
+            <!-- ================= LEFT TRACK ================= -->
+
+            <geom name="left_side_plate"
+                  type="box"
+                  size="0.21 0.005 0.055"
+                  pos="0 0.21 0"
+                  rgba="0.6 0.6 0.65 1"
+                  mass="0.4"
+                  contype="0"
+                  conaffinity="0"/>
+
+            <geom name="left_inner_plate"
+                  type="box"
+                  size="0.21 0.005 0.055"
+                  pos="0 0.15 0"
+                  rgba="0.5 0.5 0.55 1"
+                  mass="0.4"
+                  contype="0"
+                  conaffinity="0"/>
+
+            <geom name="left_tread_top"
+                  type="box"
+                  size="0.18 0.032 0.004"
+                  pos="0 0.18 0.083"
+                  rgba="0.1 0.1 0.1 1"
+                  contype="0"
+                  conaffinity="0"/>
+
+            <geom name="left_tread_bottom"
+                  type="box"
+                  size="0.18 0.032 0.004"
+                  pos="0 0.18 -0.083"
+                  rgba="0.1 0.1 0.1 1"
+                  contype="0"
+                  conaffinity="0"/>
+
+            <geom name="left_tread_front"
+                  type="cylinder"
+                  size="0.085 0.032"
+                  pos="0.16 0.18 0"
+                  euler="90 0 0"
+                  rgba="0.1 0.1 0.1 1"
+                  contype="0"
+                  conaffinity="0"/>
+
+            <geom name="left_tread_rear"
+                  type="cylinder"
+                  size="0.085 0.032"
+                  pos="-0.16 0.18 0"
+                  euler="90 0 0"
+                  rgba="0.1 0.1 0.1 1"
+                  contype="0"
+                  conaffinity="0"/>
+
+
+            <body name="left_front_wheel"
+                  pos="0.16 0.18 0">
+
+                <joint name="left_front_joint"
+                       axis="0 1 0"
+                       damping="1.5"
+                       armature="0.10"/>
+
+                <geom type="cylinder"
+                      size="0.085"
+                      fromto="0 -0.015 0 0 0.015 0"
+                      rgba="0.25 0.25 0.3 1"
+                      mass="0.8"/>
+
+            </body>
+
+
+            <body name="left_rear_wheel"
+                  pos="-0.16 0.18 0">
+
+                <joint name="left_rear_joint"
+                       axis="0 1 0"
+                       damping="1.5"
+                       armature="0.10"/>
+
+                <geom type="cylinder"
+                      size="0.085"
+                      fromto="0 -0.015 0 0 0.015 0"
+                      rgba="0.25 0.25 0.3 1"
+                      mass="0.8"/>
+
+            </body>
+
+
+            <!-- ================= RIGHT TRACK ================= -->
+
+            <geom name="right_side_plate"
+                  type="box"
+                  size="0.21 0.005 0.055"
+                  pos="0 -0.21 0"
+                  rgba="0.6 0.6 0.65 1"
+                  mass="0.4"
+                  contype="0"
+                  conaffinity="0"/>
+
+            <geom name="right_inner_plate"
+                  type="box"
+                  size="0.21 0.005 0.055"
+                  pos="0 -0.15 0"
+                  rgba="0.5 0.5 0.55 1"
+                  mass="0.4"
+                  contype="0"
+                  conaffinity="0"/>
+
+            <geom name="right_tread_top"
+                  type="box"
+                  size="0.18 0.032 0.004"
+                  pos="0 -0.18 0.083"
+                  rgba="0.1 0.1 0.1 1"
+                  contype="0"
+                  conaffinity="0"/>
+
+            <geom name="right_tread_bottom"
+                  type="box"
+                  size="0.18 0.032 0.004"
+                  pos="0 -0.18 -0.083"
+                  rgba="0.1 0.1 0.1 1"
+                  contype="0"
+                  conaffinity="0"/>
+
+            <geom name="right_tread_front"
+                  type="cylinder"
+                  size="0.085 0.032"
+                  pos="0.16 -0.18 0"
+                  euler="90 0 0"
+                  rgba="0.1 0.1 0.1 1"
+                  contype="0"
+                  conaffinity="0"/>
+
+            <geom name="right_tread_rear"
+                  type="cylinder"
+                  size="0.085 0.032"
+                  pos="-0.16 -0.18 0"
+                  euler="90 0 0"
+                  rgba="0.1 0.1 0.1 1"
+                  contype="0"
+                  conaffinity="0"/>
+
+
+            <body name="right_front_wheel"
+                  pos="0.16 -0.18 0">
+
+                <joint name="right_front_joint"
+                       axis="0 1 0"
+                       damping="1.5"
+                       armature="0.10"/>
+
+                <geom type="cylinder"
+                      size="0.085"
+                      fromto="0 -0.015 0 0 0.015 0"
+                      rgba="0.25 0.25 0.3 1"
+                      mass="0.8"/>
+
+            </body>
+
+
+            <body name="right_rear_wheel"
+                  pos="-0.16 -0.18 0">
+
+                <joint name="right_rear_joint"
+                       axis="0 1 0"
+                       damping="1.5"
+                       armature="0.10"/>
+
+                <geom type="cylinder"
+                      size="0.085"
+                      fromto="0 -0.015 0 0 0.015 0"
+                      rgba="0.25 0.25 0.3 1"
+                      mass="0.8"/>
+
+            </body>
+
+        </body>
+
     </worldbody>
 
-    <!-- Include the main robot definition -->
-    <include file="robot.xml"/>
+
+    <!-- ================= ACTUATORS ================= -->
+
+    <actuator>
+
+        <velocity joint="left_front_joint"
+                  name="left_drive_f"
+                  kv="40"
+                  forcerange="-160 160"/>
+
+        <velocity joint="left_rear_joint"
+                  name="left_drive_r"
+                  kv="40"
+                  forcerange="-160 160"/>
+
+        <velocity joint="right_front_joint"
+                  name="right_drive_f"
+                  kv="40"
+                  forcerange="-160 160"/>
+
+        <velocity joint="right_rear_joint"
+                  name="right_drive_r"
+                  kv="40"
+                  forcerange="-160 160"/>
+
+    </actuator>
+
+
+    <!-- ================= SENSORS ================= -->
+
+    <sensor>
+
+        <accelerometer name="accel"
+                       site="imu_site"/>
+
+        <gyro name="gyro"
+              site="imu_site"/>
+
+        <magnetometer name="mag"
+                      site="imu_site"/>
+
+    </sensor>
+
 </mujoco>
