@@ -16,6 +16,16 @@
             <camera name="front_cam" pos="0.22 0 0.0" xyaxes="0 -1 0 0 0 1"/>
             <site name="imu_site" pos="0 0 0"/>
 
+            <!-- Lidar -->
+            <site  name="lidar_0"    pos="0 0 0.05"   euler="0 90 0" />
+            <site  name="lidar_45"   pos="0 0 0.05"   euler="0 90 45" />
+            <site  name="lidar_90"   pos="0 0 0.05"   euler="0 90 90" />
+            <site  name="lidar_135"  pos="0 0 0.05"   euler="0 90 135" />
+            <site  name="lidar_180"  pos="0 0 0.05"   euler="0 90 180" />
+            <site  name="lidar_225"  pos="0 0 0.05"   euler="0 90 225" />
+            <site  name="lidar_270"  pos="0 0 0.05"   euler="0 90 270" />
+            <site  name="lidar_315"  pos="0 0 0.05"   euler="0 90 315" />
+
             <!-- Central Chassis Box -->
             <geom name="chassis" type="box" size="0.22 0.12 0.035" rgba="1 0 0 1" mass="5.0" contype="0" conaffinity="0"/>
 
@@ -66,5 +76,15 @@
         <accelerometer name="accel" site="imu_site"/>
         <gyro name="gyro" site="imu_site"/>
         <magnetometer name="mag" site="imu_site"/>
+
+        <rangefinder   name="lidar_0_r"      site="lidar_0"/>
+        <rangefinder   name="lidar_45_r"     site="lidar_45"/>
+        <rangefinder   name="lidar_90_r"     site="lidar_90"/>
+        <rangefinder   name="lidar_135_r"    site="lidar_135"/>
+        <rangefinder   name="lidar_180_r"    site="lidar_180"/>
+        <rangefinder   name="lidar_225_r"    site="lidar_225"/>
+        <rangefinder   name="lidar_270_r"    site="lidar_270"/>
+        <rangefinder   name="lidar_315_r"    site="lidar_315"/>
+
     </sensor>
 </mujoco>
