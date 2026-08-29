@@ -1,13 +1,24 @@
+"""Ariadne MuJoCo Physics & Vision Engine Gateway.
+
+Provides 3D interactive visualization via GLFW, renders camera streams
+(JPEG RGB & PNG 16-bit Depth), streams 100 Hz binary IMU frames over UDP, and
+converts 2D viewport mouse clicks into 3D world-space target raycasts.
+"""
+
+import json
+import math
 import os
 import socket
 import struct
 import time
-import json
-import math
 import cv2
-import numpy as np
-import mujoco
 import glfw
+import mujoco
+import numpy as np
+
+# =============================================================================
+# INITIALIZATION & MODEL LOADING
+# =============================================================================
 
 if not glfw.init():
     raise RuntimeError("Failed to initialize GLFW library")
@@ -42,6 +53,10 @@ cam.elevation = -30.0
 cam.distance = 5.0
 cam.lookat = [0.0, 0.0, 0.0]
 
+# =============================================================================
+# NETWORK SOCKET CONFIGURATION
+# =============================================================================
+
 actuator_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 actuator_sock.bind(("127.0.0.1", 5555))
 actuator_sock.setblocking(False)
@@ -68,10 +83,15 @@ last_x, last_y = 0.0, 0.0
 press_x, press_y = 0.0, 0.0
 press_time = 0.0
 
-# Balanced control gain (prevents physics explosions)
+# Gain applied to motor speed commands to ensure stable control response
 CTRL_GAIN = 15.0
 
-def raycast_ground_target(win_w, win_h, mouse_x, mouse_y):
+# =============================================================================
+# RAYCASTING AND USER INTERACTION
+# =============================================================================
+
+def raycast_ground_target(win_w: int, win_h: int, mouse_x: float, mouse_y: float):
+    """Projects viewport mouse coordinates into 3D world space, intersecting ground plane Z=0."""
     lookat = np.array(cam.lookat, dtype=np.float64)
     dist = cam.distance
     elev = math.radians(cam.elevation)
@@ -121,6 +141,7 @@ def raycast_ground_target(win_w, win_h, mouse_x, mouse_y):
     return tx, ty
 
 def mouse_button_cb(win, button, action, mods):
+    """Handles mouse click events for camera rotation and ground target selection."""
     global button_left, button_right, press_x, press_y, press_time, last_x, last_y
 
     if button == glfw.MOUSE_BUTTON_LEFT:
@@ -148,6 +169,7 @@ def mouse_button_cb(win, button, action, mods):
     last_x, last_y = glfw.get_cursor_pos(win)
 
 def mouse_move_cb(win, xpos, ypos):
+    """Updates interactive camera orbit and pan parameters upon mouse dragging."""
     global last_x, last_y
 
     dx = xpos - last_x
@@ -164,6 +186,7 @@ def mouse_move_cb(win, xpos, ypos):
     last_x, last_y = xpos, ypos
 
 def scroll_cb(win, xoffset, yoffset):
+    """Handles view zooming on mouse scroll wheel events."""
     mujoco.mjv_moveCamera(model, mujoco.mjtMouse.mjMOUSE_ZOOM, 0.0, -0.05 * yoffset, cam)
 
 glfw.set_mouse_button_callback(window, mouse_button_cb)
@@ -176,6 +199,10 @@ print(" -> Streaming RGB JPEG to UDP 127.0.0.1:5557")
 print(" -> Streaming Depth PNG to UDP 127.0.0.1:5558")
 print(" -> Streaming 52-byte IMU payload to UDP 127.0.0.1:5559 (100 Hz)")
 print(" -> Streaming Click Targets to UDP 127.0.0.1:5560\n")
+
+# =============================================================================
+# MAIN SIMULATION CONTROL LOOP
+# =============================================================================
 
 while not glfw.window_should_close(window):
     latest_bytes = None
@@ -197,6 +224,7 @@ while not glfw.window_should_close(window):
     mujoco.mj_step(model, data)
     current_time = time.time()
 
+    # Stream IMU & ground-truth pose payload at 100 Hz
     if current_time - last_imu_time >= imu_interval:
         sim_t = float(data.time)
         acc = data.sensor("accel").data.astype(np.float32)
@@ -220,7 +248,7 @@ while not glfw.window_should_close(window):
         imu_sock.sendto(imu_packet, imu_target)
         last_imu_time = current_time
 
-    # Vision feeds (30 FPS) with UDP payload overflow guards
+    # Stream RGB and Depth vision camera frames at 30 FPS
     if current_time - last_frame_time >= frame_interval:
         renderer.disable_depth_rendering()
         renderer.update_scene(data, camera=camera_id)
@@ -235,13 +263,12 @@ while not glfw.window_should_close(window):
         depth_frame = renderer.render()
         depth_mm = (np.clip(depth_frame, 0, 65.5) * 1000.0).astype(np.uint16)
 
-        # High compression PNG level 9 + size check prevents UDP WinError 10040
         _, png_buf = cv2.imencode('.png', depth_mm, [int(cv2.IMWRITE_PNG_COMPRESSION), 9])
         if len(png_buf) < 64000:
             try:
                 depth_sock.sendto(png_buf.tobytes(), ("127.0.0.1", 5558))
             except OSError:
-                pass  # Safely drop frame if packet exceeds network buffer limits
+                pass
 
         last_frame_time = current_time
 

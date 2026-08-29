@@ -1,17 +1,26 @@
+//! # Movement Subsystem Shared Types
+//!
+//! Defines 2D geometric points, robot pose, IMU telemetry packets, obstacle frames,
+//! state machine enums, and motor command structures.
+
 use std::time::Instant;
 
+/// Represents a 2D planar position coordinate in world space (meters).
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct Point2D {
     pub x: f64,
     pub y: f64,
 }
 
+/// Represents the physical pose of the robot in world coordinates.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RobotPose {
     pub position: Point2D,
+    /// Heading angle in degrees bounded within [-180.0, 180.0].
     pub heading: f64,
 }
 
+/// Raw 52-byte binary telemetry frame received from MuJoCo simulator over UDP (100 Hz).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ImuFrame {
     pub timestamp: f32,
@@ -24,10 +33,12 @@ pub struct ImuFrame {
 }
 
 impl ImuFrame {
+    /// Decodes a 52-byte little-endian byte array into thirteen 32-bit floating point numbers.
     pub fn parse(buf: &[u8; 52]) -> Self {
         let mut floats = [0.0f32; 13];
         for i in 0..13 {
-            let chunk = &buf[i * 4..(i + 1) * 4];
+            let offset = crate::verification::verify_imu_slice_offset(i);
+            let chunk = &buf[offset..offset + 4];
             floats[i] = f32::from_le_bytes(chunk.try_into().unwrap());
         }
 
@@ -43,6 +54,7 @@ impl ImuFrame {
     }
 }
 
+/// Filtered obstacle telemetry frame parsed from the `detection` module JSON payloads.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ObstacleFrame {
     pub detected: bool,
@@ -51,6 +63,7 @@ pub struct ObstacleFrame {
     pub last_seen: Option<Instant>,
 }
 
+/// Operational state enum for the navigation manager state machine.
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum NavState {
     Idle,
@@ -61,6 +74,8 @@ pub enum NavState {
     Reached,
 }
 
+/// Motor track command output dispatched to simulator over UDP.
+#[derive(Debug, Clone, Copy)]
 pub struct NavCommand {
     pub left_velocity: f64,
     pub right_velocity: f64,

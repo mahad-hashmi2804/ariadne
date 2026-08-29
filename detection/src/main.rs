@@ -1,4 +1,11 @@
+//! # Detection Subsystem Entry Point
+//!
+//! Handles UDP frame ingestion for RGB and Depth sensor streams, manages independent
+//! per-stream fallback lifecycles during sensor dropouts, performs sensor fusion,
+//! and dispatches serialized obstacle telemetry to the `movement` crate.
+
 mod vision;
+mod verification;
 
 use serde::Serialize;
 use std::fs::File;
@@ -11,73 +18,105 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use vision::{create_default_fallback_images, process_sensor_streams, ObstacleTelemetry};
 
-// ---------------------------------------------------------------------
-// Configuration constants (previously scattered magic numbers)
-// ---------------------------------------------------------------------
+// =============================================================================
+// NETWORK INTERFACE CONFIGURATION
+// =============================================================================
+
+/// Local socket address for incoming RGB JPEG frames from the simulator.
 const RGB_LISTEN_ADDR: &str = "127.0.0.1:5557";
+
+/// Local socket address for incoming 16-bit Depth PNG frames from the simulator.
 const DEPTH_LISTEN_ADDR: &str = "127.0.0.1:5558";
+
+/// Target UDP endpoint for broadcasting serialized obstacle telemetry to `movement`.
 const MOVEMENT_TARGET_ADDR: &str = "127.0.0.1:5556";
 
+/// Maximum UDP datagram payload size (bytes) to handle full image buffers without truncation.
 const MAX_DATAGRAM_SIZE: usize = 65535;
 
+// =============================================================================
+// TIMING AND STREAM LIFECYCLE CONSTANTS
+// =============================================================================
+
+/// Maximum duration allowed without receiving a live frame before marking a stream stale.
 const STREAM_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Time interval between saving paired live test frames to disk.
 const CAPTURE_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Maximum number of live paired frame captures saved during a session.
 const TOTAL_TEST_CAPTURES: u32 = 5;
 
-// If a stream has been running on fallback data this long, escalate from a
-// one-time notice to a recurring loud warning so degraded operation can't go
-// unnoticed indefinitely.
+/// Duration of continuous fallback operation required before escalating to critical warnings.
 const EXTENDED_FALLBACK_THRESHOLD: Duration = Duration::from_secs(30);
+
+/// Repeat interval for critical fallback warnings during prolonged sensor loss.
 const EXTENDED_FALLBACK_REPEAT_INTERVAL: Duration = Duration::from_secs(10);
 
+/// Target detection engine processing loop frequency in Hertz.
 const LOOP_HZ: u64 = 30;
+
+/// Microsecond cycle duration required to enforce the target processing rate.
 const TARGET_CYCLE: Duration = Duration::from_micros(1_000_000 / LOOP_HZ);
 
+/// Filename for the static RGB fallback image asset.
 const FALLBACK_RGB_FILENAME: &str = "fallback_rgb.jpg";
+
+/// Filename for the static Depth fallback image asset.
 const FALLBACK_DEPTH_FILENAME: &str = "fallback_depth.png";
 
-// ---------------------------------------------------------------------
-// Telemetry source tagging
-// ---------------------------------------------------------------------
-#[derive(Serialize, Clone, Copy, PartialEq, Eq)]
+// =============================================================================
+// TELEMETRY DOMAIN TYPES
+// =============================================================================
+
+/// Denotes the operational provenance of a processed frame buffer stream.
+#[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "lowercase")]
-enum SourceKind {
+pub enum SourceKind {
+    /// Telemetry derived from real-time live UDP sensor frames.
     Live,
+    /// Telemetry derived from static offline fallback image buffers.
     Fallback,
 }
 
-/// Wraps the vision module's Telemetry with per-stream provenance so
-/// downstream consumers (e.g. Movement) know whether a given reading
-/// was built from live sensor data or static fallback imagery.
+/// Outgoing JSON payload wrapper incorporating obstacle telemetry with stream provenance.
 #[derive(Serialize)]
 struct TelemetryPayload<'a> {
+    /// Embedded obstacle distance, bearing angle, and detection status.
     #[serde(flatten)]
     telemetry: &'a ObstacleTelemetry,
+    /// Origin provenance of the RGB frame stream.
     rgb_source: SourceKind,
+    /// Origin provenance of the Depth frame stream.
     depth_source: SourceKind,
 }
 
-// ---------------------------------------------------------------------
-// Per-stream state: tracks the latest frame, when it last arrived live,
-// and whether it is currently being served from fallback data.
-// ---------------------------------------------------------------------
+// =============================================================================
+// STREAM STATE MANAGEMENT
+// =============================================================================
+
+/// Tracks stream health, frame buffers, and fallback transitions for a single sensor channel.
 struct StreamState {
+    /// Diagnostic display label for logging (e.g., "RGB" or "Depth").
     label: &'static str,
+    /// Latest raw frame buffer bytes (JPEG or PNG).
     data: Option<Vec<u8>>,
+    /// Instant when the last live UDP packet was successfully received.
     last_live_at: Instant,
+    /// Flag indicating whether the stream is currently operating on fallback data.
     using_fallback: bool,
+    /// Instant when the stream transitioned into fallback mode, if active.
     fallback_since: Option<Instant>,
+    /// Instant when the last extended fallback warning was logged.
     last_extended_warning: Option<Instant>,
 }
 
 impl StreamState {
+    /// Initializes a stream state tracker, granting a grace period before fallback activation.
     fn new(label: &'static str) -> Self {
         Self {
             label,
             data: None,
-            // Matches original behavior: give the live feed a full
-            // STREAM_TIMEOUT grace period at startup before ever engaging
-            // fallback, rather than assuming failure from tick zero.
             last_live_at: Instant::now(),
             using_fallback: false,
             fallback_since: None,
@@ -85,6 +124,7 @@ impl StreamState {
         }
     }
 
+    /// Updates state upon receiving a live UDP byte payload, disengaging active fallbacks.
     fn mark_live(&mut self, bytes: Vec<u8>) {
         self.data = Some(bytes);
         self.last_live_at = Instant::now();
@@ -99,18 +139,36 @@ impl StreamState {
         }
     }
 
+    /// Evaluates if stream timeout duration has elapsed without live data.
     fn is_stale(&self) -> bool {
         self.last_live_at.elapsed() >= STREAM_TIMEOUT
     }
 
-    /// Switch this stream to fallback data if it has gone stale and isn't
-    /// already on fallback. Independent per stream, so a dead depth
-    /// camera no longer masks (or is masked by) a healthy RGB feed.
+    /// Engages offline fallback image data if the live stream is stale, escalating if sustained.
     fn engage_fallback_if_needed(&mut self, fallback_bytes: &Option<Vec<u8>>) {
         if !self.is_stale() {
             return;
         }
-        if !self.using_fallback {
+
+        let fallback_elapsed_secs = self
+            .fallback_since
+            .map(|since| since.elapsed().as_secs())
+            .unwrap_or(0);
+        let (has_previous_warning, previous_warning_elapsed_secs) = match self.last_extended_warning {
+            Some(last) => (true, last.elapsed().as_secs()),
+            None => (false, 0),
+        };
+
+        let decision = verification::decide_fallback(
+            self.using_fallback,
+            fallback_elapsed_secs,
+            EXTENDED_FALLBACK_THRESHOLD.as_secs(),
+            has_previous_warning,
+            previous_warning_elapsed_secs,
+            EXTENDED_FALLBACK_REPEAT_INTERVAL.as_secs(),
+        );
+
+        if decision.just_transitioned {
             println!(
                 "[Detection] Live {} stream dropped. Engaging offline fallback...",
                 self.label
@@ -118,6 +176,7 @@ impl StreamState {
             self.using_fallback = true;
             self.fallback_since = Some(Instant::now());
         }
+
         if let Some(bytes) = fallback_bytes {
             self.data = Some(bytes.clone());
         } else {
@@ -127,28 +186,20 @@ impl StreamState {
             );
         }
 
-        // Escalate if this stream has been degraded for a long time, so
-        // sustained partial-fallback operation can't go silently unnoticed.
-        if let Some(since) = self.fallback_since
-            && since.elapsed() >= EXTENDED_FALLBACK_THRESHOLD
-        {
-            let should_warn = match self.last_extended_warning {
-                None => true,
-                Some(last) => last.elapsed() >= EXTENDED_FALLBACK_REPEAT_INTERVAL,
-            };
-            if should_warn {
-                eprintln!(
-                    "[Detection] CRITICAL: {} stream has been running on static \
-                     fallback data for {:.0}s. Telemetry derived from this stream \
-                     does not reflect real-world conditions. Check sensor connectivity.",
-                    self.label,
-                    since.elapsed().as_secs_f64()
-                );
-                self.last_extended_warning = Some(Instant::now());
-            }
+        if decision.emit_critical_warning {
+            eprintln!(
+                "[Detection] CRITICAL: {} stream has been running on static \
+             fallback data for {}s. Telemetry derived from this stream \
+             does not reflect real-world conditions. Check sensor connectivity.",
+                self.label, fallback_elapsed_secs
+            );
+            self.last_extended_warning = Some(Instant::now());
         }
     }
 
+    
+
+    /// Returns the active data source classification.
     fn source(&self) -> SourceKind {
         if self.using_fallback {
             SourceKind::Fallback
@@ -158,22 +209,18 @@ impl StreamState {
     }
 }
 
-// ---------------------------------------------------------------------
-// Fallback asset cache: loaded once from disk, not re-read every cycle.
-// ---------------------------------------------------------------------
+// =============================================================================
+// FALLBACK ASSET CACHE
+// =============================================================================
+
+/// In-memory cache for disk-loaded fallback image assets to eliminate redundant I/O operations.
 struct FallbackCache {
     rgb: Option<Vec<u8>>,
     depth: Option<Vec<u8>>,
 }
 
 impl FallbackCache {
-    /// NOTE: `vision::create_default_fallback_images()` hardcodes its output
-    /// paths ("fallback_rgb.jpg" / "fallback_depth.png") relative to the
-    /// process's current working directory, and we're not modifying
-    /// vision.rs. So — unlike the frame captures below, which main.rs writes
-    /// itself and can place next to the executable — fallback assets MUST be
-    /// read from the current working directory too, or generation and
-    /// loading will silently point at two different places.
+    /// Loads fallback imagery from disk, generating default target assets if missing.
     fn load(base_dir: &Path) -> Self {
         let rgb_path = base_dir.join(FALLBACK_RGB_FILENAME);
         let depth_path = base_dir.join(FALLBACK_DEPTH_FILENAME);
@@ -199,7 +246,7 @@ impl FallbackCache {
         Self { rgb, depth }
     }
 
-    /// Re-attempt loading if a fallback asset was missing at startup.
+    /// Re-attempts loading missing assets if disk reads previously failed.
     fn refresh_if_missing(&mut self, base_dir: &Path) {
         if self.rgb.is_none() {
             self.rgb = std::fs::read(base_dir.join(FALLBACK_RGB_FILENAME)).ok();
@@ -210,13 +257,11 @@ impl FallbackCache {
     }
 }
 
-// ---------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------
+// =============================================================================
+// HELPER FUNCTIONS
+// =============================================================================
 
-/// Resolve a stable base directory (next to the executable) instead of
-/// relying on the process's current working directory, which varies by
-/// how/where the binary is launched.
+/// Resolves the parent directory of the current executable for stable relative asset resolution.
 fn resolve_base_dir() -> PathBuf {
     std::env::current_exe()
         .ok()
@@ -224,6 +269,7 @@ fn resolve_base_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// Drains a non-blocking UDP socket, returning the most recent payload if available.
 fn drain_socket(socket: &UdpSocket, buf: &mut [u8]) -> Option<Vec<u8>> {
     match socket.recv_from(buf) {
         Ok((amt, _)) => Some(buf[..amt].to_vec()),
@@ -235,17 +281,56 @@ fn drain_socket(socket: &UdpSocket, buf: &mut [u8]) -> Option<Vec<u8>> {
     }
 }
 
+/// Attempts to persist live paired RGB/Depth image buffers to disk for offline inspection.
+fn try_save_test_captures(
+    base_dir: &Path,
+    saved_count: &mut u32,
+    last_saved_time: &mut Instant,
+    rgb_data: &[u8],
+    depth_data: &[u8],
+    distance_m: f64,
+) {
+    let now = Instant::now();
+    if *saved_count < TOTAL_TEST_CAPTURES && now.duration_since(*last_saved_time) >= CAPTURE_INTERVAL {
+        *saved_count += 1;
+        *last_saved_time = now;
+
+        let rgb_path = base_dir.join(format!("frame_{}_rgb.jpg", saved_count));
+        let depth_path = base_dir.join(format!("frame_{}_depth.png", saved_count));
+
+        let write_operation = (|| -> std::io::Result<()> {
+            File::create(&rgb_path)?.write_all(rgb_data)?;
+            File::create(&depth_path)?.write_all(depth_data)?;
+            Ok(())
+        })();
+
+        match write_operation {
+            Ok(()) => println!(
+                "[{}/{}] Saved paired frames: {:?} & {:?} | Distance: {:.2}m",
+                saved_count, TOTAL_TEST_CAPTURES, rgb_path, depth_path, distance_m
+            ),
+            Err(e) => {
+                eprintln!(
+                    "[Detection] WARNING: failed to save test capture {}/{}: {}",
+                    saved_count, TOTAL_TEST_CAPTURES, e
+                );
+                *saved_count -= 1;
+            }
+        }
+    }
+}
+
+// =============================================================================
+// MAIN ENTRY POINT
+// =============================================================================
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Startup failures (can't bind sockets at all) are genuinely fatal —
-    // there is nothing useful the engine can do, so `?` is appropriate here.
     let rgb_socket = UdpSocket::bind(RGB_LISTEN_ADDR)?;
     let depth_socket = UdpSocket::bind(DEPTH_LISTEN_ADDR)?;
     rgb_socket.set_nonblocking(true)?;
     depth_socket.set_nonblocking(true)?;
 
-    // Telemetry Broadcast Socket to Movement (Port 5556)
     let telemetry_socket = UdpSocket::bind("127.0.0.1:0")?;
-
     let base_dir = resolve_base_dir();
 
     println!("[Detection] Engine online.");
@@ -254,13 +339,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(" -> Broadcasting telemetry to UDP {}", MOVEMENT_TARGET_ADDR);
     println!(" -> Base directory: {:?}\n", base_dir);
 
-    // Graceful shutdown handling.
     let running = Arc::new(AtomicBool::new(true));
     {
-        let running = Arc::clone(&running);
+        let running_flag = Arc::clone(&running);
         if let Err(e) = ctrlc::set_handler(move || {
             println!("\n[Detection] Shutdown signal received. Exiting cleanly...");
-            running.store(false, Ordering::SeqCst);
+            running_flag.store(false, Ordering::SeqCst);
         }) {
             eprintln!("[Detection] WARNING: could not register shutdown handler: {}", e);
         }
@@ -268,7 +352,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut rgb_buf = vec![0u8; MAX_DATAGRAM_SIZE];
     let mut depth_buf = vec![0u8; MAX_DATAGRAM_SIZE];
-
     let mut fallback_cache = FallbackCache::load(&base_dir);
 
     let mut rgb_state = StreamState::new("RGB");
@@ -280,7 +363,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     while running.load(Ordering::SeqCst) {
         let loop_start = Instant::now();
 
-        // --- Ingest ---
         if let Some(bytes) = drain_socket(&rgb_socket, &mut rgb_buf) {
             rgb_state.mark_live(bytes);
         }
@@ -288,40 +370,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             depth_state.mark_live(bytes);
         }
 
-        // --- Per-stream fallback engagement (independent, not coupled) ---
         if rgb_state.is_stale() || depth_state.is_stale() {
-            // Only worth trying to (re)load missing fallback assets if we
-            // actually need them right now.
             fallback_cache.refresh_if_missing(&base_dir);
         }
         rgb_state.engage_fallback_if_needed(&fallback_cache.rgb);
         depth_state.engage_fallback_if_needed(&fallback_cache.depth);
 
-        // --- Process whenever both streams have *some* data (live or fallback) ---
         if let (Some(rgb_data), Some(depth_data)) = (&rgb_state.data, &depth_state.data) {
-            // vision::process_sensor_streams indexes the depth image using
-            // coordinates derived from the RGB image's dimensions. If the two
-            // streams ever arrive at different resolutions, that indexing
-            // panics rather than returning an Err. We can't change vision.rs,
-            // so we contain the blast radius here: catch the unwind, log it,
-            // and skip this cycle instead of taking down the whole engine.
             let fusion_result = panic::catch_unwind(AssertUnwindSafe(|| {
                 process_sensor_streams(rgb_data, depth_data)
             }));
 
-            let fusion_result = match fusion_result {
+            let fusion_outcome = match fusion_result {
                 Ok(inner) => inner,
                 Err(_) => {
                     eprintln!(
                         "[Detection] WARNING: sensor fusion panicked this cycle \
                          (likely an RGB/depth resolution mismatch). Skipping frame."
                     );
-                    // Synthesize an Err so the existing match arm below handles it uniformly.
                     Err("sensor fusion panicked".into())
                 }
             };
 
-            match fusion_result {
+            match fusion_outcome {
                 Ok(telemetry) => {
                     let payload = TelemetryPayload {
                         telemetry: &telemetry,
@@ -331,13 +402,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     match serde_json::to_string(&payload) {
                         Ok(json_payload) => {
-                            if let Err(e) =
-                                telemetry_socket.send_to(json_payload.as_bytes(), MOVEMENT_TARGET_ADDR)
-                            {
-                                eprintln!(
-                                    "[Detection] WARNING: failed to send telemetry to Movement: {}",
-                                    e
-                                );
+                            if let Err(e) = telemetry_socket.send_to(json_payload.as_bytes(), MOVEMENT_TARGET_ADDR) {
+                                eprintln!("[Detection] WARNING: failed to send telemetry: {}", e);
                             }
                         }
                         Err(e) => {
@@ -345,44 +411,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
 
-                    // Only persist test captures when BOTH streams are genuinely
-                    // live — never save a frame that mixes live and fallback data.
                     let fully_live = !rgb_state.using_fallback && !depth_state.using_fallback;
-                    let now = Instant::now();
-                    if fully_live
-                        && saved_count < TOTAL_TEST_CAPTURES
-                        && now.duration_since(last_saved_time) >= CAPTURE_INTERVAL
-                    {
-                        saved_count += 1;
-                        last_saved_time = now;
-
-                        let rgb_path = base_dir.join(format!("frame_{}_rgb.jpg", saved_count));
-                        let depth_path = base_dir.join(format!("frame_{}_depth.png", saved_count));
-
-                        let save_result = (|| -> std::io::Result<()> {
-                            File::create(&rgb_path)?.write_all(rgb_data)?;
-                            File::create(&depth_path)?.write_all(depth_data)?;
-                            Ok(())
-                        })();
-
-                        match save_result {
-                            Ok(()) => println!(
-                                "[{}/{}] Saved paired frames: {:?} & {:?} | Distance: {:.2}m",
-                                saved_count,
-                                TOTAL_TEST_CAPTURES,
-                                rgb_path,
-                                depth_path,
-                                telemetry.distance_m
-                            ),
-                            Err(e) => {
-                                eprintln!(
-                                    "[Detection] WARNING: failed to save test capture {}/{}: {}",
-                                    saved_count, TOTAL_TEST_CAPTURES, e
-                                );
-                                // Don't burn a capture slot on a failed write.
-                                saved_count -= 1;
-                            }
-                        }
+                    if fully_live {
+                        try_save_test_captures(
+                            &base_dir,
+                            &mut saved_count,
+                            &mut last_saved_time,
+                            rgb_data,
+                            depth_data,
+                            telemetry.distance_m,
+                        );
                     }
                 }
                 Err(e) => {
@@ -390,9 +428,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            // Flush buffers for streams that are live (so we wait for the
-            // next real packet); fallback streams keep re-serving cached
-            // bytes each cycle by design.
             if !rgb_state.using_fallback {
                 rgb_state.data = None;
             }
@@ -401,7 +436,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // --- Enforce loop rate ---
         let elapsed = loop_start.elapsed();
         if elapsed < TARGET_CYCLE {
             std::thread::sleep(TARGET_CYCLE - elapsed);

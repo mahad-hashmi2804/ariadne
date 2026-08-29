@@ -1,50 +1,21 @@
+//! # Navigation Engine Module
+//!
+//! Implements target tracking, obstacle avoidance state transitions, path bypass logic,
+//! differential steering calculations, and acceleration ramping.
+
 use std::f64::consts::PI;
 use std::time::Duration;
 use crate::types::{NavCommand, NavState, ObstacleFrame, Point2D, RobotPose};
+use crate::verification::{
+    verify_accel_ramp, verify_angle_normalize, verify_arrival_distance_sq,
+    verify_avoid_turn_direction, verify_bypass_distance, verify_depth_threshold,
+    verify_differential_steering, verify_turn_delta, verify_turn_speed_interpolation,
+};
 
-// -----------------------------------------------------------------------------
-// VERIFIED ALGORITHM IMPLEMENTATIONS (Mirrors movement/src/verification.rs)
-// -----------------------------------------------------------------------------
-fn verify_angle_normalize(angle: i32) -> i32 {
-    let mut a = angle;
-    if a > 180 { a -= 360; }
-    if a < -180 { a += 360; }
-    a
-}
+// =============================================================================
+// NAVIGATION MANAGER STRUCT
+// =============================================================================
 
-fn verify_accel_ramp(current_v: i32, target_v: i32, max_step: i32) -> i32 {
-    let diff = target_v - current_v;
-    let clamped_step = if diff > max_step {
-        max_step
-    } else if diff < -max_step {
-        -max_step
-    } else {
-        diff
-    };
-    current_v + clamped_step
-}
-
-fn verify_bypass_distance(obstacle_depth_mm: i32, safety_buffer_mm: i32) -> i32 {
-    obstacle_depth_mm + safety_buffer_mm
-}
-
-fn verify_depth_threshold(depth_mm: i32, min_mm: i32, max_mm: i32) -> bool {
-    depth_mm >= min_mm && depth_mm <= max_mm
-}
-
-fn verify_differential_steering(_base_v: i32, steering: i32, max_split: i32) -> i32 {
-    if steering > max_split {
-        max_split
-    } else if steering < -max_split {
-        -max_split
-    } else {
-        steering
-    }
-}
-
-// -----------------------------------------------------------------------------
-// NAVIGATION ENGINE
-// -----------------------------------------------------------------------------
 pub struct NavigationManager {
     pub state: NavState,
     pub target: Option<Point2D>,
@@ -70,6 +41,7 @@ pub struct NavigationManager {
 }
 
 impl NavigationManager {
+    /// Constructs a navigation manager with safe operational defaults.
     pub fn new() -> Self {
         Self {
             state: NavState::Idle,
@@ -96,11 +68,13 @@ impl NavigationManager {
         }
     }
 
+    /// Assigns a new target coordinate and sets state to `Turning`.
     pub fn set_target(&mut self, target: Point2D) {
         self.target = Some(target);
         self.state = NavState::Turning;
     }
 
+    /// Primary navigation update loop evaluating pose, obstacles, and state transitions.
     pub fn update(&mut self, robot: &RobotPose, dt: f64) -> NavCommand {
         let target = match self.target {
             Some(t) => t,
@@ -112,15 +86,17 @@ impl NavigationManager {
 
         let dx = target.x - robot.position.x;
         let dy = target.y - robot.position.y;
-        let dist = (dx * dx + dy * dy).sqrt();
 
-        if dist < self.distance_tolerance_m {
+        let dx_mm = ((dx * 1000.0).round() as i32).clamp(-50000, 50000);
+        let dy_mm = ((dy * 1000.0).round() as i32).clamp(-50000, 50000);
+        let tol_mm = ((self.distance_tolerance_m * 1000.0).round() as i32).clamp(1, 5000);
+
+        if verify_arrival_distance_sq(dx_mm, dy_mm, tol_mm) {
             self.state = NavState::Reached;
             self.target = None;
             return self.ramp_velocities(0.0, 0.0, dt);
         }
 
-        // Verified depth thresholding
         let obs_mm = (self.obstacle.distance_m * 1000.0) as i32;
         let valid_depth = verify_depth_threshold(obs_mm, 300, 2500);
 
@@ -134,13 +110,12 @@ impl NavigationManager {
                     self.last_obstacle_dist = self.obstacle.distance_m;
                 }
 
-                let mut turned_deg = (robot.heading - self.avoid_start_heading).abs();
-                if turned_deg > 180.0 { turned_deg = 360.0 - turned_deg; }
+                let turned_deg_raw = ((robot.heading - self.avoid_start_heading).abs().round() as i32).clamp(0, 360);
+                let turned_deg = verify_turn_delta(turned_deg_raw) as f64;
 
                 if !has_active_obstacle || turned_deg >= self.max_avoid_turn_deg {
                     self.bypass_start_pos = robot.position;
 
-                    // Verified bypass calculation
                     let obstacle_mm = (self.last_obstacle_dist * 1000.0).clamp(100.0, 10000.0) as i32;
                     let verified_clearance_mm = verify_bypass_distance(obstacle_mm, 500);
                     self.bypass_target_dist = (verified_clearance_mm as f64) / 1000.0;
@@ -175,7 +150,8 @@ impl NavigationManager {
 
             _ => {
                 if has_active_obstacle && self.obstacle.distance_m < self.critical_obstacle_dist_m {
-                    self.avoid_turn_dir = if self.obstacle.angle_deg >= 0.0 { -1.0 } else { 1.0 };
+                    let angle_deg_i = (self.obstacle.angle_deg.round() as i32).clamp(-180, 180);
+                    self.avoid_turn_dir = verify_avoid_turn_direction(angle_deg_i) as f64;
                     self.avoid_start_heading = robot.heading;
                     self.last_obstacle_dist = self.obstacle.distance_m;
                     self.state = NavState::AvoidingTurn;
@@ -194,7 +170,6 @@ impl NavigationManager {
         let target_angle_rad = dy.atan2(dx);
         let target_angle_deg = target_angle_rad * (180.0 / PI);
 
-        // Verified angle normalization
         let raw_diff = (target_angle_deg - robot.heading) as i32;
         let norm_diff = verify_angle_normalize(raw_diff.clamp(-540, 540));
         let angle_diff = norm_diff as f64;
@@ -205,8 +180,10 @@ impl NavigationManager {
                     self.state = NavState::Moving;
                     (self.base_speed, self.base_speed)
                 } else {
-                    let scale = (angle_diff.abs() / self.decel_angle_deg).clamp(0.0, 1.0);
-                    let dynamic_turn_speed = self.min_turn_speed + (self.max_turn_speed - self.min_turn_speed) * scale;
+                    let min_mm = (self.min_turn_speed * 1000.0).round() as i32;
+                    let max_mm = (self.max_turn_speed * 1000.0).round() as i32;
+                    let scale = (((angle_diff.abs() / self.decel_angle_deg).clamp(0.0, 1.0)) * 1000.0).round() as i32;
+                    let dynamic_turn_speed = verify_turn_speed_interpolation(min_mm, max_mm, scale) as f64 / 1000.0;
 
                     if angle_diff > 0.0 {
                         (-dynamic_turn_speed, dynamic_turn_speed)
@@ -222,8 +199,6 @@ impl NavigationManager {
                 } else {
                     let k_p = 0.02;
                     let raw_steering = (angle_diff * k_p * 100.0) as i32;
-
-                    // Verified differential steering limit
                     let safe_steering = verify_differential_steering(180, raw_steering, 80) as f64 / 100.0;
 
                     (
@@ -238,10 +213,10 @@ impl NavigationManager {
         self.ramp_velocities(target_left, target_right, dt)
     }
 
+    /// Ramps current track velocities toward target velocities subject to max acceleration limits.
     fn ramp_velocities(&mut self, target_left: f64, target_right: f64, dt: f64) -> NavCommand {
         let max_step = (self.max_accel * dt * 1000.0).clamp(0.0, 10000.0) as i32;
 
-        // Verified acceleration ramping
         let cur_l = (self.current_left_v * 1000.0).clamp(-10000.0, 10000.0) as i32;
         let tgt_l = (target_left * 1000.0).clamp(-10000.0, 10000.0) as i32;
         self.current_left_v = (verify_accel_ramp(cur_l, tgt_l, max_step) as f64) / 1000.0;

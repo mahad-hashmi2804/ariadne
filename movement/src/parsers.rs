@@ -1,6 +1,11 @@
+//! # JSON Payload String Parsers
+//!
+//! Provides parsing routines for custom target click overrides and vision telemetry.
+
 use std::time::Instant;
 use crate::types::{ObstacleFrame, Point2D};
 
+/// Parses incoming JSON target strings (`{"x": 2.5, "y": -1.0}`) into 2D coordinates.
 pub fn parse_target_json(payload: &str) -> Option<Point2D> {
     let clean = payload.trim_matches(|c| c == '{' || c == '}' || c == ' ' || c == '\n' || c == '\r');
     let mut x = None;
@@ -23,6 +28,7 @@ pub fn parse_target_json(payload: &str) -> Option<Point2D> {
     }
 }
 
+/// Parses obstacle telemetry JSON strings broadcast by `detection`.
 pub fn parse_obstacle_json(payload: &str) -> Option<ObstacleFrame> {
     let clean = payload.trim_matches(|c| c == '{' || c == '}' || c == ' ' || c == '\n' || c == '\r');
     let mut detected = false;

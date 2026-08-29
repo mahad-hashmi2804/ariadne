@@ -33,8 +33,6 @@
             <site  name="lidar_270"  pos="0 0 0.05"   euler="0 90 270" />
             <site  name="lidar_315"  pos="0 0 0.05"   euler="0 90 315" />
 
-            <!-- Central Chassis Box -->
-            <geom name="chassis" type="box" size="0.22 0.12 0.035" rgba="1 0 0 1" mass="5.0" contype="0" conaffinity="0"/>
             <!-- Camera Housing Visual Overlay -->
             <geom type="box" size="0.015 0.035 0.015" pos="0.21 0 0" rgba="0.05 0.05 0.08 1" contype="0" conaffinity="0"/>
             <geom type="cylinder" size="0.008 0.003" pos="0.225 0 0" euler="0 90 0" rgba="0.0 0.9 1.0 1" contype="0" conaffinity="0"/>
@@ -108,7 +106,7 @@
                 <!-- Outer Wheel Hub Cap -->
                 <geom type="cylinder" size="0.06 0.016" euler="90 0 0" rgba="0.9 0.9 0.92 1" contype="0" conaffinity="0"/>
                 <geom type="cylinder" size="0.025 0.017" euler="90 0 0" rgba="1.0 0.3 0.0 1" contype="0" conaffinity="0"/>
-gi            </body>
+            </body>
         </body>
     </worldbody>
 

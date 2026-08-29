@@ -1,7 +1,10 @@
+//! # Movement Subsystem Main Loop
+
 mod calibration;
 mod nav;
 mod parsers;
 mod types;
+pub mod verification;
 
 use std::f64::consts::PI;
 use std::net::UdpSocket;
@@ -11,16 +14,20 @@ use calibration::SystemCalibrator;
 use nav::NavigationManager;
 use parsers::{parse_obstacle_json, parse_target_json};
 use types::{ImuFrame, NavState, Point2D, RobotPose};
+use verification::{
+    verify_circuit_index_advance,
+    verify_motor_buffer_offsets,
+};
 
 const CITY_CIRCUIT: &[Point2D] = &[
-    Point2D { x: 0.0, y: 0.0 },     // Waypoint 0: Central Plaza
-    Point2D { x: 8.0, y: 0.0 },     // Test Obstacle Location
     Point2D { x: 0.0, y: 0.0 },
-    Point2D { x: 0.0, y: 22.0 },    // Waypoint 1: North Avenue
-    Point2D { x: 22.0, y: 22.0 },   // Waypoint 2: East Street
-    Point2D { x: 22.0, y: -22.0 },  // Waypoint 3: South-East Sector
-    Point2D { x: 0.0, y: -22.0 },   // Waypoint 4: South Avenue
-    Point2D { x: -5.0, y: 4.5 },    // Waypoint 5: North-West Rubble Alley
+    Point2D { x: 8.0, y: 0.0 },
+    Point2D { x: 0.0, y: 0.0 },
+    Point2D { x: 0.0, y: 22.0 },
+    Point2D { x: 22.0, y: 22.0 },
+    Point2D { x: 22.0, y: -22.0 },
+    Point2D { x: 0.0, y: -22.0 },
+    Point2D { x: -5.0, y: 4.5 },
 ];
 
 fn main() -> std::io::Result<()> {
@@ -113,8 +120,8 @@ fn main() -> std::io::Result<()> {
         if calibrator.is_calibrated {
             let command = manager.update(&robot, dt);
 
-            if manager.state == NavState::Reached {
-                circuit_idx = (circuit_idx + 1) % CITY_CIRCUIT.len();
+                if manager.state == NavState::Reached {
+                circuit_idx = verify_circuit_index_advance(circuit_idx, CITY_CIRCUIT.len());
                 let next_target = CITY_CIRCUIT[circuit_idx];
                 println!(
                     "\n[CIRCUIT ADVANCE] Waypoint Reached! Advancing to Goal #{}: ({:.2}, {:.2})",
@@ -123,6 +130,7 @@ fn main() -> std::io::Result<()> {
                 manager.set_target(next_target);
             }
 
+            debug_assert!(verification::verify_motor_buffer_offsets(0, 8));
             let mut buffer = [0u8; 16];
             buffer[0..8].copy_from_slice(&command.left_velocity.to_le_bytes());
             buffer[8..16].copy_from_slice(&command.right_velocity.to_le_bytes());
