@@ -160,7 +160,7 @@ Low level track velocity commands computed from high-level linear and angular ve
 ## 5. Simulation Environment (`simulation/`)
 
 ### Interactive MuJoCo Engine (`live_viewer.py`)
-_(**Primary Authors:** Abdullah Gill)_
+_(**Primary Authors:** Muhammad Abdullah)_
 
 * **Actuation Bridge:** Accepts 16-byte UDP packets containing track velocity targets and applies them to joint velocity actuators via balanced control gains (`CTRL_GAIN = 15.0`).
 * **Interactive Target Selector:** Converts 2D viewport mouse clicks into 3D world-space ground plane intersections via raycasting, sending `Point2D` target overrides over UDP (`5560`).
