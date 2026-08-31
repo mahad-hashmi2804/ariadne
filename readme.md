@@ -2,7 +2,7 @@
 
 ### **Comprehensive Engineering Wiki & Technical Reference**
 
-**Architectural Design & Integration Lead:** Mahad Hashmi\
+**System Design & Integration Lead:** Mahad Hashmi\
 **Quality Assurance & Verification Lead:** Abeera Ahsan
 
 Ariadne is a modular, formally verified edge robotics platform engineered for autonomous urban navigation and search-and-rescue operations. The system architecture decouples real-time kinematic control, depth-based vision processing, and physics simulation into asynchronous microservices communicating via local UDP sockets. This design supports offloading heavy perception tasks to dedicated NPU silicon while reserving real-time movement calculations for isolated microcontrollers.
@@ -176,6 +176,7 @@ City plaza scene containing paved avenues, crosswalks, elevated sidewalk curbs (
 ---
 
 ## 6. Formal Verification Suite (Verus / Z3 SMT)
+_(**Primary Authors:** Mahad Hashmi, Kainat Mansha & Abdul Moiz)_
 
 Ariadne contains **25 SMT-backed formal proofs** across two crate-level `verification.rs` modules, mathematically guaranteeing that core navigation and vision algorithms operate with zero arithmetic overflows, buffer panics, division-by-zero errors, or illegal state transitions.
 
@@ -215,12 +216,12 @@ Ariadne contains **25 SMT-backed formal proofs** across two crate-level `verific
 ### Movement Invariants (`movement/src/verification.rs` — 18 Proofs)
 
 **Part 1: Stateful Controller Model**
-
 1. **`NavController::new`**: Formally proves the constructor initializes safe zero-velocity defaults and idle state.
 2. **`NavController::set_state`**: Proves state transitions out of `Idle` are strictly restricted to valid target states (`Turning`, `Reached`).
 3. **`NavController::ramp_velocities`**: Uses `old(self)` and `final(self)` state bounds to prove per-frame velocity mutations never exceed `max_accel_step`.
 4. **`NavController::update_bypass_distance`**: Proves calculated bypass trajectories strictly overshoot obstacle depth plus the required safety buffer.
-   **Part 2: Domain Verification Helpers**
+
+**Part 2: Domain Verification Helpers**
 5. **`verify_angle_normalize`**: Proves raw heading angle differences map strictly within [−180∘,180∘] modulo 360∘.
 6. **`verify_depth_threshold`**: Proves raw sensor depth values outside valid operational thresholds are mathematically rejected.
 7. **`verify_differential_steering`**: Proves differential track speed splits never exceed mechanical steering thresholds.
