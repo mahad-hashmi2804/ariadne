@@ -24,7 +24,7 @@ if not glfw.init():
     raise RuntimeError("Failed to initialize GLFW library")
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(SCRIPT_DIR, "world.xml")
+MODEL_PATH = os.path.join(SCRIPT_DIR, "sandbox_world.xml")
 
 model = mujoco.MjModel.from_xml_path(MODEL_PATH)
 data = mujoco.MjData(model)

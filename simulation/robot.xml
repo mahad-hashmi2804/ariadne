@@ -122,14 +122,14 @@
         <gyro name="gyro" site="imu_site"/>
         <magnetometer name="mag" site="imu_site"/>
 
-        <rangefinder   name="lidar_0_r"      site="lidar_0"/>
-        <rangefinder   name="lidar_45_r"     site="lidar_45"/>
-        <rangefinder   name="lidar_90_r"     site="lidar_90"/>
-        <rangefinder   name="lidar_135_r"    site="lidar_135"/>
-        <rangefinder   name="lidar_180_r"    site="lidar_180"/>
-        <rangefinder   name="lidar_225_r"    site="lidar_225"/>
-        <rangefinder   name="lidar_270_r"    site="lidar_270"/>
-        <rangefinder   name="lidar_315_r"    site="lidar_315"/>
+<!--        <rangefinder   name="lidar_0_r"      site="lidar_0"/>-->
+<!--        <rangefinder   name="lidar_45_r"     site="lidar_45"/>-->
+<!--        <rangefinder   name="lidar_90_r"     site="lidar_90"/>-->
+<!--        <rangefinder   name="lidar_135_r"    site="lidar_135"/>-->
+<!--        <rangefinder   name="lidar_180_r"    site="lidar_180"/>-->
+<!--        <rangefinder   name="lidar_225_r"    site="lidar_225"/>-->
+<!--        <rangefinder   name="lidar_270_r"    site="lidar_270"/>-->
+<!--        <rangefinder   name="lidar_315_r"    site="lidar_315"/>-->
 
     </sensor>
 </mujoco>
