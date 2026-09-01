@@ -116,17 +116,17 @@ impl NavController {
 /// 5. Formally proves angle normalization stays within [-180°, 180°].
 pub fn verify_angle_normalize(angle: i32) -> (norm: i32)
     requires
-        angle >= -540 && angle <= 540,
+        angle >= i32::MIN + 360 && angle <= i32::MAX - 360,
     ensures
         norm >= -180,
         norm <= 180,
         (angle - norm) % 360 == 0,
 {
-    let mut a = angle;
+    let mut a = angle % 360;
+
     if a > 180 {
         a = a - 360;
-    }
-    if a < -180 {
+    } else if a < -180 {
         a = a + 360;
     }
     a
